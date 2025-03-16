@@ -1,9 +1,9 @@
 {
   "name": "com.elfenlabs.common",
   "version": "0.0.1",
-  "displayName": "ElfenLabs Common Runtime Library",
+  "displayName": "ElfenLabs Common Library",
   "description": "Common library including utilities and extensions",
-  "unity": "6000.0",
+  "unity": "2028.0",
   "unityRelease": "37f1",
   "dependencies": {
     "com.unity.mathematics": "1.3.2"

@@ -1,19 +1,17 @@
-using System.Collections.Generic;
-using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 
 namespace Elfenlabs.Mesh
 {
-    public partial static class MeshUtility
+    public static partial class MeshUtility
     {
         private static readonly float2 DefaultSize = new float2(1, 1);
 
-        public static Mesh CreateQuad() => CreateQuad(DefaultSize);
+        public static UnityEngine.Mesh CreateQuad() => CreateQuad(DefaultSize);
 
-        public static Mesh CreateQuad(float2 size)
+        public static UnityEngine.Mesh CreateQuad(float2 size)
         {
-            var mesh = new Mesh();
+            var mesh = new UnityEngine.Mesh();
             var vertices = new Vector3[4];
             var triangles = new int[6];
 
