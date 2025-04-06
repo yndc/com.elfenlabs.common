@@ -22,7 +22,7 @@ public struct SpriteOverlay : IComponentData
     public float4 Value;
 }
 
-[MaterialProperty("_SpriteBackgroundColor")]
+[MaterialProperty("_BaseColor")]
 public struct SpriteBackgroundColor : IComponentData
 {
     public float4 Value;
