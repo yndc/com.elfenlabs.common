@@ -1,3 +1,4 @@
+using Elfenlabs.Rendering;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Rendering;
@@ -36,13 +37,57 @@ namespace Elfenlabs.Mesh
             mesh.triangles = triangles;
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
+            mesh.uv = new Vector2[]
+            {
+                new Vector2(0, 0),
+                new Vector2(1, 0),
+                new Vector2(0, 1),
+                new Vector2(1, 1)
+            };
 
             return mesh;
         }
 
-        public static Entity CreatePrefab(string name, UnityEngine.Mesh mesh, EntityManager entityManager, Shader shader, int layer)
+        public static Entity CreatePrefab(World world, string name, UnityEngine.Mesh mesh, Shader shader, int layer)
         {
             var material = new Material(shader);
+            var desc = new RenderMeshDescription(
+                shadowCastingMode: ShadowCastingMode.Off,
+                receiveShadows: false,
+                motionVectorGenerationMode: MotionVectorGenerationMode.ForceNoMotion,
+                layer: layer,
+                renderingLayerMask: 4294967295,
+                lightProbeUsage: LightProbeUsage.Off,
+                staticShadowCaster: false
+            );
+
+            var meshID = RenderUtility.RegisterMesh(world, mesh);
+            var materialID = RenderUtility.RegisterMaterial(world, material);
+
+            // Create empty base entity
+            var prefab = world.EntityManager.CreateEntity();
+            world.EntityManager.SetName(prefab, name);
+            world.EntityManager.AddComponent<Prefab>(prefab);
+            world.EntityManager.AddComponent<LocalToWorld>(prefab);
+            world.EntityManager.AddComponent<Parent>(prefab);
+            world.EntityManager.AddComponentData(prefab, new LocalTransform { Scale = 1f });
+            world.EntityManager.AddComponentData(prefab, new PostTransformMatrix { Value = float4x4.identity });
+
+            // Populate the prototype entity with the required components
+            RenderMeshUtility.AddComponents(
+                prefab,
+                world.EntityManager,
+                desc,
+                new MaterialMeshInfo(
+                    materialID,
+                    meshID
+                ));
+
+            return prefab;
+        }
+
+        public static Entity CreatePrefab(string name, UnityEngine.Mesh mesh, EntityManager entityManager, Material material, int layer)
+        {
             var desc = new RenderMeshDescription(
                 shadowCastingMode: ShadowCastingMode.Off,
                 receiveShadows: false,
@@ -65,13 +110,17 @@ namespace Elfenlabs.Mesh
             entityManager.AddComponentData(prefab, new LocalTransform { Scale = 1f });
             entityManager.AddComponentData(prefab, new PostTransformMatrix { Value = float4x4.identity });
 
+            var egs = entityManager.World.GetExistingSystemManaged<EntitiesGraphicsSystem>();
+
             // Populate the prototype entity with the required components
             RenderMeshUtility.AddComponents(
                 prefab,
                 entityManager,
                 desc,
-                renderMeshArray,
-                MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0));
+                new MaterialMeshInfo(
+                    egs.RegisterMaterial(material),
+                    egs.RegisterMesh(mesh)
+                ));
 
             return prefab;
         }
