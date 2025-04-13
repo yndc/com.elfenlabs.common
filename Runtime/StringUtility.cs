@@ -6,6 +6,30 @@ using Unity.Entities;
 
 namespace Elfenlabs.String
 {
+    public unsafe struct UTF8CharRef
+    {
+        public byte* Value;
+        public UTF8CharRef(ref byte character)
+        {
+            Value = (byte*)UnsafeUtility.AddressOf(ref character);
+        }
+
+        public byte AsByte()
+        {
+            return Value[0];
+        }
+
+        public char AsChar()
+        {
+            return (char)Value[0];
+        }
+
+        public int AsInt()
+        {
+            return Value[0];
+        }
+    }
+
     public static class StringUtility
     {
         public static NativeArray<byte> CreateByteArray(string str, Allocator allocator = Allocator.Temp)
@@ -62,6 +86,26 @@ namespace Elfenlabs.String
                     var bytesWritten = Encoding.UTF8.GetBytes(stringPtr, src.Length, (byte*)dst.GetUnsafePtr() + offset, utf8ByteCount);
                 }
             }
+        }
+
+        public static bool IsBreakOpportunity(UTF8CharRef charRef)
+        {
+            return char.IsWhiteSpace(charRef.AsChar()) || charRef.AsByte() == '\n' || charRef.AsByte() == '\r' || charRef.AsByte() == '\t' || charRef.AsChar() == 0x2028 || charRef.AsChar() == 0x2029;
+        }
+
+        public static bool IsBreakOpportunity(byte b)
+        {
+            return char.IsWhiteSpace((char)b) || b == '\n' || b == '\r' || b == '\t';
+        }
+
+        public static bool IsNewLine(UTF8CharRef charRef)
+        {
+            return charRef.AsByte() == '\n' || charRef.AsByte() == '\r' || charRef.AsChar() == 0x2028 || charRef.AsChar() == 0x2029;
+        }
+
+        public static bool IsNewLine(byte b)
+        {
+            return b == '\n' || b == '\r';
         }
     }
 }
