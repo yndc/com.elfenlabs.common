@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 
-public static class EditorUtility
+public static class AssetUtility
 {
     public static void DeleteAllSubObjects<T>(this T obj) where T : Object
     {
