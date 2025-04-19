@@ -20,14 +20,14 @@ namespace Elfenlabs.Unsafe
             }
         }
 
-        public static NativeBuffer<T> AsNativeBuffer<T>(this BlobAssetReference<BlobArray<T>> blobRef) where T : unmanaged
+        public static NativeBuffer<T> AsNativeBuffer<T>(this ref BlobArray<T> blobRef) where T : unmanaged
         {
             unsafe
             {
                 return new NativeBuffer<T>(
-                    (IntPtr)blobRef.Value.GetUnsafePtr(),
+                    (IntPtr)blobRef.GetUnsafePtr(),
                     Allocator.Invalid,
-                    blobRef.Value.Length * UnityUnsafeUtility.SizeOf<T>());
+                    blobRef.Length * UnityUnsafeUtility.SizeOf<T>());
             }
         }
     }

@@ -31,9 +31,9 @@ namespace Elfenlabs.Collections
             }
         }
 
-        public UnsafeHashMap<K, T> Reconstruct(Allocator allocator)
+        public UnsafeParallelHashMap<K, T> Reconstruct(Allocator allocator)
         {
-            var map = new UnsafeHashMap<K, T>(Keys.Length, allocator);
+            var map = new UnsafeParallelHashMap<K, T>(Keys.Length, allocator);
             for (int i = 0; i < Keys.Length; i++)
             {
                 map.Add(Keys[i], Values[i]);
