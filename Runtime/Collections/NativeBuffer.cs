@@ -76,6 +76,17 @@ namespace Elfenlabs.Collections
             }
         }
 
+        public NativeArray<T> AsNativeArray()
+        {
+            unsafe
+            {
+                var arr = NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray<T>(ptr.ToPointer(), Count(), allocator);
+                var atomicSafetyHandle = AtomicSafetyHandle.Create();
+                NativeArrayUnsafeUtility.SetAtomicSafetyHandle(ref arr, atomicSafetyHandle);
+                return arr;
+            }
+        }
+
         public static NativeBuffer<byte> FromBytes(byte[] bytes, Allocator allocator)
         {
             var buffer = new NativeBuffer<byte>(bytes.Length, allocator);
@@ -136,7 +147,7 @@ namespace Elfenlabs.Collections
             }
         }
 
-        public readonly void Dispose()
+        public void Dispose()
         {
             if (allocator == Allocator.Invalid)
             {
@@ -146,6 +157,7 @@ namespace Elfenlabs.Collections
             {
                 UnsafeUtility.Free((void*)ptr, allocator);
             }
+            allocator = Allocator.Invalid;
         }
 
         public unsafe JobHandle Dispose(JobHandle inputDeps)
@@ -164,6 +176,7 @@ namespace Elfenlabs.Collections
 
         struct BufferDisposalJob : IJob
         {
+            [NativeDisableUnsafePtrRestriction]
             public IntPtr Ptr;
             public Allocator Allocator;
 
