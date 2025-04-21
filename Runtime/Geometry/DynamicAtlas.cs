@@ -5,11 +5,10 @@ using Unity.Mathematics;
 using Elfenlabs.Collections;
 using Unity.Entities;
 using Unity.Collections.LowLevel.Unsafe;
-using Unity.Entities.Serialization;
 
-namespace Elfenlabs.Texture
+namespace Elfenlabs.Geometry
 {
-    public interface IRectangle
+    public interface IAtlasElement
     {
         public int X { get; set; }
         public int Y { get; set; }
@@ -17,7 +16,7 @@ namespace Elfenlabs.Texture
         public int Height { get; }
     }
 
-    public struct AtlasPacker<T> : IDisposable, INativeDisposable where T : unmanaged, IRectangle
+    public struct DynamicAtlas<T> : IDisposable, INativeDisposable where T : unmanaged, IAtlasElement
     {
         public struct Config
         {
@@ -33,12 +32,12 @@ namespace Elfenlabs.Texture
             public int Width; // Width
         }
 
-        public struct Blob : IBlobSerialized<AtlasPacker<T>>
+        public struct Blob : IBlobSerialized<DynamicAtlas<T>>
         {
             private Config Config;
             private BlobArray<SkylineNode> Skyline;
 
-            public void Serialize(BlobBuilder builder, AtlasPacker<T> atlas)
+            public void Serialize(BlobBuilder builder, DynamicAtlas<T> atlas)
             {
                 Config = atlas.config;
                 var skylineBuilder = builder.Allocate(ref Skyline, atlas.skyline.Length);
@@ -48,9 +47,9 @@ namespace Elfenlabs.Texture
                 }
             }
 
-            public AtlasPacker<T> Deserialize(Allocator allocator)
+            public DynamicAtlas<T> Deserialize(Allocator allocator)
             {
-                var packer = new AtlasPacker<T>(Config, allocator);
+                var packer = new DynamicAtlas<T>(Config, allocator);
                 packer.skyline.Clear();
                 for (int i = 0; i < Skyline.Length; i++)
                 {
@@ -58,47 +57,6 @@ namespace Elfenlabs.Texture
                 }
                 return packer;
             }
-
-            // public static AtlasPacker<T> Deserialize(byte[] bytes, Allocator allocator)
-            // {
-            //     unsafe
-            //     {
-            //         fixed (byte* ptr = bytes)
-            //         {
-            //             var reader = new MemoryBinaryReader(ptr, bytes.Length);
-            //             BlobAssetReference<Blob>.TryRead(reader, 0, out var blobAssetRef);
-            //             var result = blobAssetRef.Value.Deserialize(allocator);
-            //             blobAssetRef.Dispose();
-            //             return result;
-            //         }
-            //     }
-            // }
-
-            // public static BlobAssetReference<Blob> CreateReference(in AtlasPacker<T> atlas, Allocator allocator = Allocator.Persistent)
-            // {
-            //     using var builder = new BlobBuilder(Allocator.Temp);
-            //     ref var root = ref builder.ConstructRoot<Blob>();
-            //     root.Serialize(builder, atlas);
-            //     return builder.CreateBlobAssetReference<Blob>(allocator);
-            // }
-
-            // public static byte[] ToBytes(in AtlasPacker<T> atlas)
-            // {
-            //     using var builder = new BlobBuilder(Allocator.Temp);
-            //     ref var root = ref builder.ConstructRoot<Blob>();
-            //     root.Serialize(builder, atlas);
-            //     var memoryWriter = new MemoryBinaryWriter();
-            //     BlobAssetReference<Blob>.Write(memoryWriter, builder, 0);
-            //     unsafe
-            //     {
-            //         var arr = new byte[memoryWriter.Length];
-            //         fixed (byte* ptr = arr)
-            //         {
-            //             UnsafeUtility.MemCpy(ptr, memoryWriter.Data, memoryWriter.Length);
-            //         }
-            //         return arr;
-            //     }
-            // }
         }
 
         private Config config;
@@ -110,7 +68,7 @@ namespace Elfenlabs.Texture
         /// </summary>
         /// <param name="config">Configuration settings for the atlas dimensions and margin.</param>
         /// <param name="allocator">The allocator to use for the internal skyline list.</param>
-        public AtlasPacker(Config config, Allocator allocator)
+        public DynamicAtlas(Config config, Allocator allocator)
         {
             this.config = config;
             this.skyline = new UnsafeList<SkylineNode>(1, allocator);
@@ -159,7 +117,7 @@ namespace Elfenlabs.Texture
         /// <param name="items">A NativeArray containing glyph metrics. Input dimensions are read,
         /// output coordinates (atlas_x_px, atlas_y_px) are written back.</param>
         /// <returns>The number of glyphs successfully placed into *this slice* during this call.</returns>
-        public int PackGlyphs(NativeArray<T> items)
+        public int AddItems(NativeSlice<T> items)
         {
             int placed_count = 0;
 

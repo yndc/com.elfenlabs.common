@@ -5,7 +5,7 @@ using UnityEngine.Rendering;
 
 namespace Elfenlabs.Rendering
 {
-    public static class RenderUtility
+    public  static partial class RenderUtility
     {
         public static BatchMeshID RegisterMesh(World world, UnityEngine.Mesh mesh)
         {
