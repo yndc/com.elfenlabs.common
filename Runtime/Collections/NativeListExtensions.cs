@@ -41,5 +41,29 @@ namespace Elfenlabs.Collections
                 UnsafeUtility.WriteArrayElement(list.GetUnsafePtr(), index, item);
             }
         }
+
+        public static NativeSlice<T> Slice<T>(this ref Unity.Collections.NativeList<T> list, int start, int length = -1)
+            where T : unmanaged
+        {
+            if (length == -1)
+            {
+                length = list.Length - start;
+            }
+            if (start < 0 || start >= list.Length
+                || length < 0 || start + length > list.Length)
+            {
+                throw new ArgumentOutOfRangeException($"Invalid slice parameters: start={start}, length={length}");
+            }
+            unsafe
+            {
+                var ptr = list.GetUnsafePtr() + start;
+                var slice = NativeSliceUnsafeUtility.ConvertExistingDataToNativeSlice<T>(
+                    ptr, UnsafeUtility.SizeOf<T>(), length);
+                NativeSliceUnsafeUtility.SetAtomicSafetyHandle(
+                    ref slice,
+                    NativeListUnsafeUtility.GetAtomicSafetyHandle(ref list));
+                return slice;
+            }
+        }
     }
 }

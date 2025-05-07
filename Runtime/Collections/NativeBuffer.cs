@@ -1,5 +1,9 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using PlasticPipe.PlasticProtocol.Messages;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
@@ -13,8 +17,10 @@ namespace Elfenlabs.Collections
     /// </summary>
     /// <typeparam name="T"></typeparam>
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
-    public struct NativeBuffer<T> where T : unmanaged
+    public struct NativeBuffer<T> : IEnumerable<T>, IDisposable
+        where T : unmanaged
     {
+        [NativeDisableUnsafePtrRestriction]
         private IntPtr ptr;
         private Allocator allocator;
         private int size;
@@ -147,6 +153,14 @@ namespace Elfenlabs.Collections
             }
         }
 
+        public unsafe T* GetUnsafePtr()
+        {
+            unsafe
+            {
+                return (T*)ptr;
+            }
+        }
+
         public void Dispose()
         {
             if (allocator == Allocator.Invalid)
@@ -172,6 +186,83 @@ namespace Elfenlabs.Collections
                 Allocator = allocator
             };
             return job.Schedule(inputDeps);
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            return new Enumerator(ref this);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+
+        public static implicit operator NativeSlice<T>(NativeBuffer<T> buffer)
+        {
+            unsafe
+            {
+                var slice = NativeSliceUnsafeUtility.ConvertExistingDataToNativeSlice<T>(buffer.GetUnsafePtr(), UnsafeUtility.SizeOf<T>(), buffer.Count());
+                NativeSliceUnsafeUtility.SetAtomicSafetyHandle(ref slice, AtomicSafetyHandle.Create());
+                return slice;
+            }
+        }
+
+        public struct Enumerator : IEnumerator<T>, IEnumerator, IDisposable
+        {
+            private NativeBuffer<T> buffer;
+
+            private int index;
+
+            private T value;
+
+            public T Current
+            {
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                get
+                {
+                    return value;
+                }
+            }
+
+            object IEnumerator.Current
+            {
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                get
+                {
+                    return Current;
+                }
+            }
+
+            public Enumerator(ref NativeBuffer<T> buffer)
+            {
+                this.buffer = buffer;
+                index = -1;
+                value = default;
+            }
+
+            public void Dispose()
+            {
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public unsafe bool MoveNext()
+            {
+                index++;
+                if (index < buffer.Count())
+                {
+                    value = UnsafeUtility.ReadArrayElement<T>((void*)buffer.ptr, index);
+                    return true;
+                }
+
+                value = default;
+                return false;
+            }
+
+            public void Reset()
+            {
+                index = -1;
+            }
         }
 
         struct BufferDisposalJob : IJob

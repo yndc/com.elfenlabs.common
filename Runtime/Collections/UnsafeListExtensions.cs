@@ -1,5 +1,6 @@
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Burst;
+using Unity.Collections;
 
 namespace Elfenlabs.Collections
 {
@@ -37,6 +38,20 @@ namespace Elfenlabs.Collections
                     UnsafeUtility.MemMove(dest, src, bytesToMove);
                 }
                 UnsafeUtility.WriteArrayElement(list.Ptr, index, item);
+            }
+        }
+
+        public static void AddRange<T>(this ref UnsafeList<T> list, NativeSlice<T> values) where T : unmanaged
+        {
+            var index = list.Length;
+
+            list.Resize(list.Length + values.Length, NativeArrayOptions.UninitializedMemory);
+
+            unsafe
+            {
+                var sizeOf = UnsafeUtility.SizeOf<T>();
+                void* dst = (byte*)list.Ptr + index * sizeOf;
+                UnsafeUtility.MemCpy(dst, values.GetUnsafePtr(), values.Length * sizeOf);
             }
         }
     }

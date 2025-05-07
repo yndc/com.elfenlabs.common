@@ -1,3 +1,4 @@
+using Elfenlabs.Debug;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 
@@ -18,13 +19,13 @@ namespace Elfenlabs.Texture
             // --- Input Validation ---
             if (sourceTexture == null)
             {
-                Debug.LogError("ResizeDepth Error: Source Texture2DArray is null.");
+                Log.Error("ResizeDepth Error: Source Texture2DArray is null.");
                 return null;
             }
 
             if (newDepth <= sourceTexture.depth)
             {
-                Debug.LogError($"ResizeDepth Error: New depth ({newDepth}) must be greater than the original depth ({sourceTexture.depth}).");
+                Log.Error($"ResizeDepth Error: New depth ({newDepth}) must be greater than the original depth ({sourceTexture.depth}).");
                 return null;
             }
 
@@ -49,7 +50,7 @@ namespace Elfenlabs.Texture
             }
             catch (System.Exception ex)
             {
-                Debug.LogError($"ResizeDepth Error: Failed to create new Texture2DArray ({width}x{height}x{newDepth}, {format}): {ex.Message}");
+                Log.Error($"ResizeDepth Error: Failed to create new Texture2DArray ({width}x{height}x{newDepth}, {format}): {ex.Message}");
                 if (newTexture != null) Object.Destroy(newTexture); // Clean up if partially created
                 return null;
             }
@@ -67,7 +68,7 @@ namespace Elfenlabs.Texture
                     }
                     catch (System.Exception ex)
                     {
-                        Debug.LogError($"ResizeDepth Error: Failed to copy slice {slice}, mip {mip}: {ex.Message}");
+                        Log.Error($"ResizeDepth Error: Failed to copy slice {slice}, mip {mip}: {ex.Message}");
                         Object.Destroy(newTexture); // Clean up the new texture on error
                         if (destroyOriginal) Object.Destroy(sourceTexture); // Destroy original if requested, even on error? Maybe not desirable.
                         return null; // Return null indicating failure
@@ -82,6 +83,32 @@ namespace Elfenlabs.Texture
             }
 
             return newTexture;
+        }
+
+        public static Texture2D Clone(Texture2D sourceTexture, TextureCreationFlags flags = TextureCreationFlags.DontInitializePixels)
+        {
+            var texture = new Texture2D(
+                sourceTexture.width,
+                sourceTexture.height,
+                sourceTexture.graphicsFormat,
+                flags | TextureCreationFlags.DontUploadUponCreate)
+            {
+                name = sourceTexture.name + "_clone",
+                filterMode = sourceTexture.filterMode,
+                wrapMode = sourceTexture.wrapMode,
+            };
+
+            Graphics.CopyTexture(sourceTexture, texture);
+            return texture;
+        }
+
+        public static void Fill(Texture2D texture, Color32 color)
+        {
+            var array = texture.GetRawTextureData<Color32>();
+            for (int i = 0; i < array.Length; i++)
+            {
+                array[i] = color;
+            }
         }
     }
 }
