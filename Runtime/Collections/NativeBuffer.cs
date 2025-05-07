@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using PlasticPipe.PlasticProtocol.Messages;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
@@ -87,8 +86,10 @@ namespace Elfenlabs.Collections
             unsafe
             {
                 var arr = NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray<T>(ptr.ToPointer(), Count(), allocator);
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
                 var atomicSafetyHandle = AtomicSafetyHandle.Create();
                 NativeArrayUnsafeUtility.SetAtomicSafetyHandle(ref arr, atomicSafetyHandle);
+#endif
                 return arr;
             }
         }
@@ -203,7 +204,9 @@ namespace Elfenlabs.Collections
             unsafe
             {
                 var slice = NativeSliceUnsafeUtility.ConvertExistingDataToNativeSlice<T>(buffer.GetUnsafePtr(), UnsafeUtility.SizeOf<T>(), buffer.Count());
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
                 NativeSliceUnsafeUtility.SetAtomicSafetyHandle(ref slice, AtomicSafetyHandle.Create());
+#endif
                 return slice;
             }
         }

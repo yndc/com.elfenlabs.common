@@ -39,7 +39,9 @@ namespace Elfenlabs.Collections
                 var ptr = buffer.GetUnsafePtr() + start;
                 var slice = NativeSliceUnsafeUtility.ConvertExistingDataToNativeSlice<T>(
                     ptr, UnsafeUtility.SizeOf<T>(), length);
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
                 NativeSliceUnsafeUtility.SetAtomicSafetyHandle(ref slice, AtomicSafetyHandle.Create());
+#endif
                 return slice;
             }
         }
