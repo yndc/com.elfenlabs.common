@@ -5,18 +5,11 @@ using Unity.Mathematics;
 using Elfenlabs.Collections;
 using Unity.Entities;
 using Unity.Collections.LowLevel.Unsafe;
+using Elfenlabs.Debug;
 
 namespace Elfenlabs.Geometry
 {
-    public interface IAtlasElement
-    {
-        public int X { get; set; }
-        public int Y { get; set; }
-        public int Width { get; }
-        public int Height { get; }
-    }
-
-    public struct DynamicAtlas<T> : IDisposable, INativeDisposable where T : unmanaged, IAtlasElement
+    public struct DynamicAtlas : IDisposable, INativeDisposable
     {
         public struct Config
         {
@@ -25,43 +18,63 @@ namespace Elfenlabs.Geometry
             public int Flags;       // User-defined flags? (Not used directly in packer)
         }
 
-        private struct SkylineNode
+        private struct SkylineNode : IEquatable<SkylineNode>
         {
             public int X;     // Left coordinate (inclusive)
             public int Y;     // Height (y-coordinate) of the segment's top edge (floor)
             public int Width; // Width
+
+            public bool Equals(SkylineNode other)
+            {
+                return X == other.X && Y == other.Y && Width == other.Width;
+            }
+
+            public static SkylineNode Initial(Config config)
+            {
+                return new SkylineNode
+                {
+                    X = config.Margin,
+                    Y = config.Margin,
+                    Width = config.Size - 2 * config.Margin
+                };
+            }
         }
 
-        public struct Blob : IBlobSerialized<DynamicAtlas<T>>
+        public struct Blob : IBlobField<DynamicAtlas>
         {
-            private Config Config;
-            private BlobArray<SkylineNode> Skyline;
+            private Config config;
+            private BlobArray<SkylineNode> skyline;
+            private int itemCount;
 
-            public void Serialize(BlobBuilder builder, DynamicAtlas<T> atlas)
+            public void Serialize(BlobBuilder builder, DynamicAtlas atlas)
             {
-                Config = atlas.config;
-                var skylineBuilder = builder.Allocate(ref Skyline, atlas.skyline.Length);
-                for (int i = 0; i < skylineBuilder.Length; i++)
+                config = atlas.config;
+                itemCount = atlas.Count;
+                var skylineBuilder = builder.Allocate(ref skyline, atlas.skyline.Length);
+                for (int i = 0; i < atlas.skyline.Length; i++)
                 {
                     skylineBuilder[i] = atlas.skyline[i];
                 }
             }
 
-            public DynamicAtlas<T> Deserialize(Allocator allocator)
+            public DynamicAtlas Deserialize(Allocator allocator)
             {
-                var packer = new DynamicAtlas<T>(Config, allocator);
-                packer.skyline.Clear();
-                for (int i = 0; i < Skyline.Length; i++)
+                var atlas = new DynamicAtlas(config, allocator);
+                atlas.itemCount = itemCount;
+                atlas.skyline.Clear();
+                for (int i = 0; i < skyline.Length; i++)
                 {
-                    packer.skyline.Add(Skyline[i]);
+                    atlas.skyline.Add(skyline[i]);
                 }
-                return packer;
+                return atlas;
             }
         }
 
         private Config config;
 
         private UnsafeList<SkylineNode> skyline;
+
+        private int itemCount;
 
         /// <summary>
         /// Creates and initializes a new packer for a single atlas slice.
@@ -72,21 +85,21 @@ namespace Elfenlabs.Geometry
         {
             this.config = config;
             this.skyline = new UnsafeList<SkylineNode>(1, allocator);
+            this.itemCount = 0;
 
             // Initialize the skyline respecting the margin.
             // If size <= 2*margin, skyline remains empty and packing will fail.
             if (config.Size > 2 * config.Margin)
             {
-                skyline.Add(new SkylineNode
-                {
-                    X = config.Margin,
-                    Y = config.Margin,
-                    Width = config.Size - 2 * config.Margin
-                });
+                skyline.Add(SkylineNode.Initial(config));
             }
         }
 
+        public int Count => itemCount;
+
         public readonly bool IsCreated => skyline.IsCreated;
+
+        public bool IsEmpty => itemCount == 0;
 
         /// <summary>
         /// Disposes the internal NativeList holding the skyline data.
@@ -110,49 +123,48 @@ namespace Elfenlabs.Geometry
         }
 
         /// <summary>
+        /// Adds an item to the atlas, returns the position coordinate within the atlas. 
+        /// If there is no space available it will return -1
+        /// </summary>
+        /// <param name="size"></param>
+        /// <returns></returns>
+        public int2 AddItem(int2 size)
+        {
+            // Calculate node dimensions including the margin for placement spacing
+            int nodeWidth = size.x + 2 * config.Margin;
+            int nodeHeight = size.y + 2 * config.Margin;
+
+            if (FindPosition(nodeWidth, nodeHeight, out var bestX, out var bestY))
+            {
+                PlaceNodeAndUpdateSkyline(bestX, bestY, nodeWidth, nodeHeight);
+
+                return new int2(bestX, config.Size - (bestY + nodeHeight)); // Y-down coordinate system
+            }
+
+            itemCount++;
+
+            return new int2(-1, -1);
+        }
+
+        /// <summary>
         /// Attempts to add multiple glyphs into the current atlas slice.
-        /// Modifies the input glyphs array directly with atlas_x_px/atlas_y_px.
-        /// Glyphs that couldn't fit will have atlas_x_px = -1.
         /// </summary>
         /// <param name="items">A NativeArray containing glyph metrics. Input dimensions are read,
         /// output coordinates (atlas_x_px, atlas_y_px) are written back.</param>
         /// <returns>The number of glyphs successfully placed into *this slice* during this call.</returns>
-        public int AddItems(NativeSlice<T> items)
+        public int AddItems(NativeSlice<int2> sizes, ref NativeSlice<int2> positions)
         {
             int placed_count = 0;
 
-            // Cannot pack if skyline is empty (e.g., invalid config preventing initialization)
-            if (!skyline.IsCreated)
+            for (int i = 0; i < sizes.Length; ++i)
             {
-                return 0;
-            }
-
-            for (int i = 0; i < items.Length; ++i)
-            {
-                var item = items[i];
-
-                // Calculate node dimensions including the margin for placement spacing
-                int nodeWidth = item.Width + 2 * config.Margin;
-                int nodeHeight = item.Height + 2 * config.Margin;
-
-                if (nodeWidth <= config.Margin || nodeHeight <= config.Margin)
-                    continue;
-
-                if (FindPosition(nodeWidth, nodeHeight, out var bestX, out var bestY))
-                {
-                    PlaceNodeAndUpdateSkyline(bestX, bestY, nodeWidth, nodeHeight);
-
-                    item.X = bestX;
-                    item.Y = config.Size - (bestY + nodeHeight);
-
-                    items[i] = item; // Write back modified struct
-
-                    placed_count++;
-                }
-                else
+                var placement = AddItem(sizes[i]);
+                if (placement.x == -1 || placement.y == -1)
                 {
                     break;
                 }
+                positions[i] = placement;
+                placed_count++;
             }
             return placed_count;
         }
