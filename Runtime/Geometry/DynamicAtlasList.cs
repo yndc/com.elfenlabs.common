@@ -93,9 +93,8 @@ namespace Elfenlabs.Geometry
 
                 if (packed < sizeSlice.Length)
                 {
-                    var newAtlas = new DynamicAtlas(config, allocator);
-                    currentAtlas = newAtlas;
-                    atlases.Add(newAtlas);
+                    atlases.Add(new DynamicAtlas(config, allocator));
+                    currentAtlas = ref atlases.ElementAt(atlases.Length - 1);
                 }
 
                 atlasPackedCounts.Add(packed);
@@ -155,7 +154,8 @@ namespace Elfenlabs.Geometry
         {
             for (int i = 0; i < atlases.Length; i++)
             {
-                atlases[i].Dispose();
+                ref var atlas = ref atlases.ElementAt(i);
+                atlas.Dispose();
             }
             atlases.Dispose();
         }
@@ -164,7 +164,8 @@ namespace Elfenlabs.Geometry
         {
             for (int i = 0; i < atlases.Length; i++)
             {
-                inputDeps = atlases[i].Dispose(inputDeps);
+                ref var atlas = ref atlases.ElementAt(i);
+                inputDeps = atlas.Dispose(inputDeps);
             }
             return inputDeps;
         }
