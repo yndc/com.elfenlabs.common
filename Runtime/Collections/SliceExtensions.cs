@@ -8,7 +8,11 @@ namespace Elfenlabs.Collections
     public static class SliceExtensions
     {
         public unsafe static NativeSlice<T> CreateSlice<T>(
-            void* srcPtr, int max, int start = 0, int length = -1, AtomicSafetyHandle safetyHandle = default)
+            void* srcPtr, int max, int start = 0, int length = -1
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            , AtomicSafetyHandle safetyHandle = default
+#endif
+            )
             where T : unmanaged
         {
             if (length == -1)
@@ -24,9 +28,11 @@ namespace Elfenlabs.Collections
                 var ptr = (T*)srcPtr + start;
                 var slice = NativeSliceUnsafeUtility.ConvertExistingDataToNativeSlice<T>(
                     ptr, UnsafeUtility.SizeOf<T>(), length);
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
                 NativeSliceUnsafeUtility.SetAtomicSafetyHandle(
                     ref slice,
                     safetyHandle.Equals(new AtomicSafetyHandle()) ? AtomicSafetyHandle.Create() : safetyHandle);
+#endif
                 return slice;
             }
         }
@@ -40,10 +46,13 @@ namespace Elfenlabs.Collections
                     buf.GetUnsafePtr(),
                     buf.Length,
                     start,
-                    length,
-                    NativeArrayUnsafeUtility.GetAtomicSafetyHandle(
+                    length
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+                    , NativeArrayUnsafeUtility.GetAtomicSafetyHandle(
                         buf.AsNativeArray() // We need to get the safety handle somehow
-                    ));
+                    )
+#endif
+                    );
             }
         }
     }

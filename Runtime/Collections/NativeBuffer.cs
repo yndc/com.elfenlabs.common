@@ -16,76 +16,19 @@ namespace Elfenlabs.Collections
     /// </summary>
     /// <typeparam name="T"></typeparam>
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
-    public struct NativeBuffer<T> : IEnumerable<T>, IDisposable
+    public unsafe struct NativeBuffer<T> : IEnumerable<T>, IDisposable
         where T : unmanaged
     {
         [NativeDisableUnsafePtrRestriction]
-        private IntPtr ptr;
+        private void* ptr;
         private Allocator allocator;
         private int size;
-
-        /// <summary>
-        /// Create a NativeBuffer from a NativeArray.
-        /// </summary>
-        /// <param name="array"></param>
-        /// <returns></returns>
-        public static NativeBuffer<T> Alias(NativeArray<T> array)
-        {
-            unsafe
-            {
-                var buffer = new NativeBuffer<T>
-                {
-                    size = array.Length * UnsafeUtility.SizeOf<T>(),
-                    allocator = Allocator.Invalid,
-                    ptr = (IntPtr)array.GetUnsafeReadOnlyPtr()
-                };
-                return buffer;
-            }
-        }
-
-        /// <summary>
-        /// Create a NativeBuffer from a NativeArray.
-        /// </summary>
-        /// <param name="array"></param>
-        /// <returns></returns>
-        public static NativeBuffer<T> Alias(DynamicBuffer<T> array)
-        {
-            unsafe
-            {
-                var buffer = new NativeBuffer<T>
-                {
-                    size = array.Length * UnsafeUtility.SizeOf<T>(),
-                    allocator = Allocator.Invalid,
-                    ptr = (IntPtr)array.GetUnsafeReadOnlyPtr()
-                };
-                return buffer;
-            }
-        }
-
-        public static NativeBuffer<byte> FromString(string str, Allocator allocator)
-        {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(str);
-            return NativeBuffer<byte>.FromBytes(bytes, allocator);
-        }
-
-        public static NativeBuffer<byte> Alias(FixedString128Bytes str)
-        {
-            unsafe
-            {
-                return new NativeBuffer<byte>
-                {
-                    size = str.Length,
-                    allocator = Allocator.Invalid,
-                    ptr = (IntPtr)str.GetUnsafePtr()
-                };
-            }
-        }
 
         public NativeArray<T> AsNativeArray()
         {
             unsafe
             {
-                var arr = NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray<T>(ptr.ToPointer(), Count(), allocator);
+                var arr = NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray<T>(ptr, Count(), allocator);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
                 var atomicSafetyHandle = AtomicSafetyHandle.Create();
                 NativeArrayUnsafeUtility.SetAtomicSafetyHandle(ref arr, atomicSafetyHandle);
@@ -94,18 +37,36 @@ namespace Elfenlabs.Collections
             }
         }
 
+        public NativeBuffer<U> ReinterpretCast<U>()
+            where U : unmanaged
+        {
+            unsafe
+            {
+                if (UnsafeUtility.SizeOf<T>() != UnsafeUtility.SizeOf<U>())
+                {
+                    throw new InvalidOperationException($"Cannot reinterpret cast from {typeof(T)} to {typeof(U)}. Size mismatch.");
+                }
+                return new NativeBuffer<U>
+                {
+                    size = size,
+                    allocator = allocator,
+                    ptr = ptr
+                };
+            }
+        }
+
         public static NativeBuffer<byte> FromBytes(byte[] bytes, Allocator allocator)
         {
             var buffer = new NativeBuffer<byte>(bytes.Length, allocator);
-            Marshal.Copy(bytes, 0, buffer.ptr, bytes.Length);
+            Marshal.Copy(bytes, 0, (IntPtr)buffer.ptr, bytes.Length);
             return buffer;
         }
 
-        public NativeBuffer(IntPtr ptr, Allocator allocator, int size)
+        public NativeBuffer(void* ptr, Allocator allocator, int byteSize)
         {
             this.ptr = ptr;
             this.allocator = allocator;
-            this.size = size;
+            this.size = byteSize;
         }
 
         public NativeBuffer(int length, Allocator allocator)
@@ -114,7 +75,7 @@ namespace Elfenlabs.Collections
             this.allocator = allocator;
             unsafe
             {
-                ptr = (IntPtr)UnsafeUtility.Malloc(size, 4, allocator);
+                ptr = UnsafeUtility.Malloc(size, 4, allocator);
             }
         }
 
@@ -142,14 +103,14 @@ namespace Elfenlabs.Collections
             {
                 unsafe
                 {
-                    return Marshal.PtrToStructure<T>(IntPtr.Add(ptr, index * sizeof(T)));
+                    return UnsafeUtility.ReadArrayElement<T>(ptr, index);
                 }
             }
             set
             {
                 unsafe
                 {
-                    Marshal.StructureToPtr(value, IntPtr.Add(ptr, index * sizeof(T)), false);
+                    UnsafeUtility.WriteArrayElement(ptr, index, value);
                 }
             }
         }
@@ -271,14 +232,14 @@ namespace Elfenlabs.Collections
         struct BufferDisposalJob : IJob
         {
             [NativeDisableUnsafePtrRestriction]
-            public IntPtr Ptr;
+            public void* Ptr;
             public Allocator Allocator;
 
             public readonly void Execute()
             {
                 unsafe
                 {
-                    UnsafeUtility.Free((void*)Ptr, Allocator);
+                    UnsafeUtility.Free(Ptr, Allocator);
                 }
             }
         }

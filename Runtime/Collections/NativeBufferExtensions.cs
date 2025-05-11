@@ -8,20 +8,6 @@ namespace Elfenlabs.Collections
 {
     public static class NativeBufferExtensions
     {
-        public static NativeBuffer<U> ReinterpretCast<T, U>(this NativeBuffer<T> buffer)
-            where T : unmanaged
-            where U : unmanaged
-        {
-            unsafe
-            {
-                if (UnsafeUtility.SizeOf<T>() != UnsafeUtility.SizeOf<U>())
-                {
-                    throw new InvalidOperationException($"Cannot reinterpret cast from {typeof(T)} to {typeof(U)}. Size mismatch.");
-                }
-                return *(NativeBuffer<U>*)&buffer;
-            }
-        }
-
         public static NativeSlice<T> Slice<T>(this NativeBuffer<T> buffer, int start, int length)
             where T : unmanaged
         {
@@ -65,7 +51,7 @@ namespace Elfenlabs.Collections
             unsafe
             {
                 return new NativeBuffer<T>(
-                    (IntPtr)buffer.GetUnsafeReadOnlyPtr(),
+                    buffer.GetUnsafeReadOnlyPtr(),
                     Allocator.Invalid,
                     buffer.Length * UnsafeUtility.SizeOf<T>());
             }
@@ -77,7 +63,7 @@ namespace Elfenlabs.Collections
             unsafe
             {
                 return new NativeBuffer<T>(
-                    (IntPtr)array.GetUnsafeReadOnlyPtr(),
+                    array.GetUnsafeReadOnlyPtr(),
                     Allocator.Invalid,
                     array.Length * UnsafeUtility.SizeOf<T>());
             }
@@ -89,9 +75,21 @@ namespace Elfenlabs.Collections
             unsafe
             {
                 return new NativeBuffer<T>(
-                    (IntPtr)slice.GetUnsafeReadOnlyPtr(),
+                    slice.GetUnsafeReadOnlyPtr(),
                     Allocator.Invalid,
                     slice.Length * UnsafeUtility.SizeOf<T>());
+            }
+        }
+
+        public static NativeBuffer<T> AsNativeBuffer<T>(this NativeList<T> list)
+            where T : unmanaged
+        {
+            unsafe
+            {
+                return new NativeBuffer<T>(
+                    list.GetUnsafeReadOnlyPtr(),
+                    Allocator.Invalid,
+                    list.Length * UnsafeUtility.SizeOf<T>());
             }
         }
     }

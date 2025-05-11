@@ -58,33 +58,43 @@ namespace Elfenlabs.String
             }
         }
 
-        public static void CopyToNativeArray(string src, NativeArray<byte> dst)
+        public static unsafe void CopyToNativeList(NativeList<uint> dst, string src, int offset = 0)
         {
-            var utf8ByteCount = Encoding.UTF8.GetByteCount(src);
-            if (utf8ByteCount > dst.Length)
+            fixed (char* srcCharsPtr = src)
             {
-                throw new ArgumentException($"Destination array is not large enough to hold the string. Required: {utf8ByteCount}, Available: {dst.Length}");
-            }
+                int byteCount = Encoding.UTF32.GetByteCount(srcCharsPtr, src.Length);
+                int codePointCount = byteCount / 4;
 
-            unsafe
-            {
-                fixed (char* stringPtr = src)
+                int requiredLength = offset + codePointCount;
+                if (dst.Length < requiredLength)
                 {
-                    var bytesWritten = Encoding.UTF8.GetBytes(stringPtr, src.Length, (byte*)dst.GetUnsafePtr(), utf8ByteCount);
+                    dst.ResizeUninitialized(requiredLength);
                 }
+
+                uint* dstUintPtr = dst.GetUnsafePtr() + offset;
+                byte* dstBytePtr = (byte*)dstUintPtr;
+
+                Encoding.UTF32.GetBytes(srcCharsPtr, src.Length, dstBytePtr, byteCount);
             }
         }
 
-        public static void CopyToDynamicBuffer<T>(string src, DynamicBuffer<T> dst, int offset = 0) where T : unmanaged, IBufferElementData
+        public static unsafe void CopyToDynamicBuffer(DynamicBuffer<uint> dst, string src, int offset = 0)
         {
-            var utf8ByteCount = Encoding.UTF8.GetByteCount(src);
-            dst.ResizeUninitialized(offset + utf8ByteCount);
-            unsafe
+            fixed (char* srcCharsPtr = src)
             {
-                fixed (char* stringPtr = src)
+                int byteCount = Encoding.UTF32.GetByteCount(srcCharsPtr, src.Length);
+                int codePointCount = byteCount / 4;
+
+                int requiredLength = offset + codePointCount;
+                if (dst.Length < requiredLength)
                 {
-                    var bytesWritten = Encoding.UTF8.GetBytes(stringPtr, src.Length, (byte*)dst.GetUnsafePtr() + offset, utf8ByteCount);
+                    dst.ResizeUninitialized(requiredLength);
                 }
+
+                uint* dstUintPtr = ((uint*)dst.GetUnsafePtr()) + offset;
+                byte* dstBytePtr = (byte*)dstUintPtr;
+
+                Encoding.UTF32.GetBytes(srcCharsPtr, src.Length, dstBytePtr, byteCount);
             }
         }
     }

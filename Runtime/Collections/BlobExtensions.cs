@@ -13,7 +13,7 @@ namespace Elfenlabs.Collections
             unsafe
             {
                 return new NativeBuffer<T>(
-                    (IntPtr)blobRef.GetUnsafePtr(),
+                    blobRef.GetUnsafePtr(),
                     Allocator.Invalid,
                     blobRef.Length * UnsafeUtility.SizeOf<T>());
             }

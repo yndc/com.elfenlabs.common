@@ -154,8 +154,7 @@ namespace Elfenlabs.Geometry
         {
             for (int i = 0; i < atlases.Length; i++)
             {
-                ref var atlas = ref atlases.ElementAt(i);
-                atlas.Dispose();
+                atlases[i].Dispose();
             }
             atlases.Dispose();
         }
@@ -164,8 +163,7 @@ namespace Elfenlabs.Geometry
         {
             for (int i = 0; i < atlases.Length; i++)
             {
-                ref var atlas = ref atlases.ElementAt(i);
-                inputDeps = atlas.Dispose(inputDeps);
+                inputDeps = atlases[i].Dispose(inputDeps);
             }
             return inputDeps;
         }

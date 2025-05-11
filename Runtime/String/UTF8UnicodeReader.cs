@@ -1,13 +1,107 @@
+using System.Collections;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
-using Elfenlabs.Debug;
-using Unity.Collections.LowLevel.Unsafe;
 
 namespace Elfenlabs.String
 {
-    public unsafe struct UTF8UnicodeReader
+    public unsafe struct UTF8UnicodeReader : IEnumerable<int>
     {
         private int length;
         private byte* ptr;
+
+        public struct Enumerator : IEnumerator<int>
+        {
+            private int index;
+            private UTF8UnicodeReader reader;
+            private int currentCodepoint;
+
+            public int Current => currentCodepoint;
+
+            object IEnumerator.Current => Current;
+
+            public Enumerator(UTF8UnicodeReader reader)
+            {
+                this.reader = reader;
+                this.index = -1; // Position before the first element
+                this.currentCodepoint = 0;
+            }
+
+            public void Dispose() { }
+
+            public bool MoveNext()
+            {
+                if (index == -1) // First call to MoveNext
+                {
+                    index = 0;
+                }
+                else
+                {
+                    // Advance index based on the length of the previous character
+                    if (reader.IsASCII(index))
+                    {
+                        index += 1;
+                    }
+                    else if (reader.Is2ByteSequence(index))
+                    {
+                        index += 2;
+                    }
+                    else if (reader.Is3ByteSequence(index))
+                    {
+                        index += 3;
+                    }
+                    else if (reader.Is4ByteSequence(index))
+                    {
+                        index += 4;
+                    }
+                    else
+                    {
+                        // Invalid UTF-8 sequence or end of string, advance by 1 to be safe or handle error
+                        index += 1;
+                    }
+                }
+
+                if (index >= reader.length)
+                {
+                    currentCodepoint = 0; // Or some other indicator for end
+                    return false;
+                }
+
+                if (reader.IsASCII(index))
+                {
+                    currentCodepoint = reader.GetASCII(index);
+                }
+                else if (reader.Is2ByteSequence(index))
+                {
+                    if (index + 1 < reader.length)
+                        currentCodepoint = (int)reader.GetUnicodeFrom2ByteSequence(index);
+                    else { currentCodepoint = 0xFFFD; return false; } // Truncated sequence
+                }
+                else if (reader.Is3ByteSequence(index))
+                {
+                    if (index + 2 < reader.length)
+                        currentCodepoint = (int)reader.GetUnicodeFrom3ByteSequence(index);
+                    else { currentCodepoint = 0xFFFD; return false; } // Truncated sequence
+                }
+                else if (reader.Is4ByteSequence(index))
+                {
+                    if (index + 3 < reader.length)
+                        currentCodepoint = (int)reader.GetUnicodeFrom4ByteSequence(index);
+                    else { currentCodepoint = 0xFFFD; return false; } // Truncated sequence
+                }
+                else
+                {
+                    // Invalid starting byte for a UTF-8 sequence
+                    currentCodepoint = 0xFFFD; // Unicode replacement character
+                }
+                return true;
+            }
+
+            public void Reset()
+            {
+                index = -1;
+                currentCodepoint = 0;
+            }
+        }
 
         public UTF8UnicodeReader(byte* ptr, int length)
         {
@@ -201,6 +295,16 @@ namespace Elfenlabs.String
             }
 
             return false;
+        }
+
+        public IEnumerator<int> GetEnumerator()
+        {
+            return new Enumerator(this);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
         }
     }
 }

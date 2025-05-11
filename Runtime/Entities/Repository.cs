@@ -19,6 +19,8 @@ namespace Elfenlabs.Entities
 
         UnsafeHashSet<TKey> tester;
 
+        public readonly int Count() => data.Count();
+
         public Repository(int capacity, Allocator allocator)
         {
             data = new UnsafeParallelHashMap<TKey, TValue>(capacity, allocator);
