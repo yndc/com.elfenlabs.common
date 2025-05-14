@@ -1,16 +1,25 @@
 using NUnit.Framework;
 using Unity.Collections;
 using Elfenlabs.String; // Your namespace
-using System; // For ArgumentException
+using System;
 
-using Range = Elfenlabs.String.Range; // Assuming Range is defined in your namespace
+using Range = Elfenlabs.String.Range; // Assuming you have a Range struct defined in your project
 
 public class MarkupParserTests
 {
     // Helper method to extract string from Range for readability in assertions
     private string GetString(string original, Range range)
     {
-        if (range.IsEmpty || range.Start < 0 || original == null || range.Start + range.Length > original.Length) return "[Invalid Range In Test]";
+        if (original == null) return "[NULL ORIGINAL STRING IN TEST]";
+        if (range.IsEmpty || range.Start < 0 || range.Start + range.Length > original.Length)
+        {
+            // Provide more context if range is invalid for a non-empty original string
+            if (!range.IsEmpty && original.Length > 0)
+            {
+                return $"[Invalid Range ({range.Start},{range.Length}) for string of length {original.Length}]";
+            }
+            return string.Empty; // Default for truly empty or invalid scenarios
+        }
         return original.Substring(range.Start, range.Length);
     }
 
@@ -22,11 +31,48 @@ public class MarkupParserTests
             return;
         }
         Assert.IsFalse(range.IsEmpty, $"{context} - Range should not be empty if expecting substring '{expectedSubstring}'.");
-        Assert.IsTrue(range.Start >= 0 && range.Start <= originalString.Length, $"{context} - Range start {range.Start} is out of bounds for string length {originalString.Length}.");
-        Assert.IsTrue(range.Start + range.Length <= originalString.Length, $"{context} - Range end {range.Start + range.Length} is out of bounds for string length {originalString.Length}.");
+        Assert.IsTrue(range.Start >= 0 && range.Start <= originalString.Length, $"{context} - Range start {range.Start} out of bounds for '{originalString}'. Length: {originalString.Length}");
+        Assert.IsTrue(range.Start + range.Length <= originalString.Length, $"{context} - Range end {range.Start + range.Length} out of bounds for '{originalString}'. Length: {originalString.Length}");
 
         string actualSubstring = originalString.Substring(range.Start, range.Length);
         Assert.AreEqual(expectedSubstring, actualSubstring, $"{context} - Substring mismatch.");
+    }
+
+    private void PrintResults(string input, TextMarkupFeatures features)
+    {
+        UnityEngine.Debug.Log($"--- Test Input: \"{input}\" ---");
+        UnityEngine.Debug.Log($"Found {features.Elements.Length} elements:");
+        for (int i = 0; i < features.Elements.Length; i++)
+        {
+            var e = features.Elements[i];
+            string tagName = GetString(input, e.TagName);
+            string tagValue = GetString(input, e.TagValue);
+            UnityEngine.Debug.Log($"  Element {i}: TagName='{tagName}' (Range:{e.TagName}), TagValue='{tagValue}' (Range:{e.TagValue})");
+        }
+
+        UnityEngine.Debug.Log($"Found {features.Attributes.Length} attributes:");
+        for (int i = 0; i < features.Attributes.Length; i++)
+        {
+            var a = features.Attributes[i];
+            string key = GetString(input, a.Key);
+            string val = GetString(input, a.Value);
+            UnityEngine.Debug.Log($"  Attribute {i}: OwnerElementIndex={a.OwnerElementIndex}, Key='{key}' (Range:{a.Key}), Value='{val}' (Range:{a.Value})");
+        }
+
+        UnityEngine.Debug.Log($"Found {features.Contents.Length} content entries:");
+        for (int i = 0; i < features.Contents.Length; i++)
+        {
+            var c = features.Contents[i];
+            if (c.IsText)
+            {
+                UnityEngine.Debug.Log($"  Content {i}: OwnerElementIdx={c.OwnerElementIndex}, Type=Text, Text='{GetString(input, c.Content)}' (Range:{c.Content})");
+            }
+            else
+            {
+                UnityEngine.Debug.Log($"  Content {i}: OwnerElementIdx={c.OwnerElementIndex}, Type=Element, ChildElementIdx={c.ContentElementIndex}");
+            }
+        }
+        UnityEngine.Debug.Log($"------------------------------------");
     }
 
 
@@ -34,72 +80,99 @@ public class MarkupParserTests
     public void Parse_EmptyString_ReturnsEmptyLists()
     {
         string input = "";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-
-        Assert.AreEqual(0, elements.Length);
-        Assert.AreEqual(0, attributes.Length);
-
-        elements.Dispose();
-        attributes.Dispose();
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+        Assert.AreEqual(0, features.Elements.Length);
+        Assert.AreEqual(0, features.Attributes.Length);
+        Assert.AreEqual(0, features.Contents.Length);
+        features.Dispose();
     }
 
     [Test]
-    public void Parse_SimpleTag_CorrectElement()
+    public void Parse_SimpleTag_CorrectOutput()
     {
         string input = "<a>content</a>";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+        // PrintResults(input, features);
 
-        Assert.AreEqual(1, elements.Length);
-        Assert.AreEqual(0, attributes.Length);
+        Assert.AreEqual(1, features.Elements.Length, "Elements count");
+        Assert.AreEqual(0, features.Attributes.Length, "Attributes count");
+        Assert.AreEqual(1, features.Contents.Length, "Contents count");
 
-        AssertSubstring("a", input, elements[0].TagName, "Element 0 TagName");
-        AssertSubstring("<a>", input, elements[0].FullOpeningTag, "Element 0 FullOpeningTag");
-        AssertSubstring("content", input, elements[0].Content, "Element 0 Content");
+        AssertSubstring("a", input, features.Elements[0].TagName, "Element 0 TagName");
+        Assert.IsTrue(features.Elements[0].TagValue.IsEmpty, "Element 0 TagValue should be empty");
 
-        elements.Dispose();
-        attributes.Dispose();
+        Assert.AreEqual(0, features.Contents[0].OwnerElementIndex, "Content 0 Owner");
+        Assert.IsTrue(features.Contents[0].IsText, "Content 0 IsText");
+        AssertSubstring("content", input, features.Contents[0].Content, "Content 0 Text");
+
+        features.Dispose();
     }
 
     [Test]
-    public void Parse_NestedTags_CorrectElements()
+    public void Parse_NestedTags_CorrectOutput()
     {
-        string input = "<a><b>content</b></a>";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
+        string input = "<a><b>content</b>text after b</a>";
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+        // PrintResults(input, features);
 
-        Assert.AreEqual(2, elements.Length);
-        Assert.AreEqual(0, attributes.Length);
+        Assert.AreEqual(2, features.Elements.Length, "Elements count"); // <a> and <b>
+        Assert.AreEqual(0, features.Attributes.Length, "Attributes count");
+        Assert.AreEqual(3, features.Contents.Length, "Contents count");
 
-        AssertSubstring("a", input, elements[0].TagName, "Element 0 (a) TagName");
-        AssertSubstring("<a>", input, elements[0].FullOpeningTag, "Element 0 (a) FullOpeningTag");
-        AssertSubstring("<b>content</b>", input, elements[0].Content, "Element 0 (a) Content");
+        // Element 0: <a>
+        AssertSubstring("a", input, features.Elements[0].TagName);
+        // Element 1: <b>
+        AssertSubstring("b", input, features.Elements[1].TagName);
 
-        AssertSubstring("b", input, elements[1].TagName, "Element 1 (b) TagName");
-        AssertSubstring("<b>", input, elements[1].FullOpeningTag, "Element 1 (b) FullOpeningTag");
-        AssertSubstring("content", input, elements[1].Content, "Element 1 (b) Content");
+        // Contents
+        // Content 0: <b> (child of <a>, OwnerElementIndex=0, ContentElementIndex=1)
+        Assert.AreEqual(0, features.Contents[0].OwnerElementIndex, "Content 0 Owner (a)");
+        Assert.AreEqual(1, features.Contents[0].ContentElementIndex, "Content 0 Child Index (b)");
+        Assert.IsTrue(features.Contents[0].IsNestedElement, "Content 0 IsNestedElement");
 
-        elements.Dispose();
-        attributes.Dispose();
+        // Content 1: "content" (child of <b>, OwnerElementIndex=1, IsText)
+        Assert.AreEqual(1, features.Contents[1].OwnerElementIndex, "Content 1 Owner (b)");
+        Assert.IsTrue(features.Contents[1].IsText, "Content 1 IsText");
+        AssertSubstring("content", input, features.Contents[1].Content, "Content 1 Text");
+
+        // Content 2: "text after b" (child of <a>, OwnerElementIndex=0, IsText)
+        Assert.AreEqual(0, features.Contents[2].OwnerElementIndex, "Content 2 Owner (a)");
+        Assert.IsTrue(features.Contents[2].IsText, "Content 2 IsText");
+        AssertSubstring("text after b", input, features.Contents[2].Content, "Content 2 Text");
+
+        features.Dispose();
     }
 
     [Test]
-    public void Parse_SelfClosingTag_Allowed_CorrectElement()
+    public void Parse_SelfClosingTag_Allowed_CorrectOutput()
     {
-        string input = "<img src=\"url\"/>";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.AllowEmptyTag | MarkupRuleFlag.AllowValuelessAttribute);
+        string input = "<a><img src=\"url\"/>text</a>";
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.AllowEmptyTag | MarkupRuleFlag.AllowValuelessAttribute);
+        // PrintResults(input, features);
 
-        Assert.AreEqual(1, elements.Length);
-        Assert.AreEqual(1, attributes.Length);
+        Assert.AreEqual(2, features.Elements.Length); // <a> and <img>
+        Assert.AreEqual(1, features.Attributes.Length); // src="url"
 
-        AssertSubstring("img", input, elements[0].TagName, "Element 0 TagName");
-        AssertSubstring(input, input, elements[0].FullOpeningTag, "Element 0 FullOpeningTag");
-        Assert.IsTrue(elements[0].Content.IsEmpty, "Self-closing tag content should be empty.");
+        AssertSubstring("a", input, features.Elements[0].TagName);
+        AssertSubstring("img", input, features.Elements[1].TagName);
+        Assert.IsTrue(features.Elements[1].TagValue.IsEmpty, "Self-closing img tag should have empty TagValue");
 
-        Assert.AreEqual(0, attributes[0].ElementIndex);
-        AssertSubstring("src", input, attributes[0].Key, "Attribute 0 Key");
-        AssertSubstring("url", input, attributes[0].Value, "Attribute 0 Value");
 
-        elements.Dispose();
-        attributes.Dispose();
+        Assert.AreEqual(1, features.Attributes[0].OwnerElementIndex, "Attribute owner is img (index 1)");
+        AssertSubstring("src", input, features.Attributes[0].Key);
+        AssertSubstring("url", input, features.Attributes[0].Value);
+
+        Assert.AreEqual(2, features.Contents.Length);
+        // Content 0: <img> (child of <a>)
+        Assert.AreEqual(0, features.Contents[0].OwnerElementIndex);
+        Assert.AreEqual(1, features.Contents[0].ContentElementIndex);
+        Assert.IsTrue(features.Contents[0].IsNestedElement);
+        // Content 1: "text" (child of <a>)
+        Assert.AreEqual(0, features.Contents[1].OwnerElementIndex);
+        Assert.IsTrue(features.Contents[1].IsText);
+        AssertSubstring("text", input, features.Contents[1].Content);
+
+        features.Dispose();
     }
 
     [Test]
@@ -108,9 +181,8 @@ public class MarkupParserTests
         string input = "<img/>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.None);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.None);
+            features.Dispose();
         });
         StringAssert.Contains("Self-closing tag 'img'", ex.Message);
         StringAssert.Contains("not allowed", ex.Message);
@@ -119,50 +191,56 @@ public class MarkupParserTests
 
 
     [Test]
-    public void Parse_TagWithAttributes_CorrectAttributes()
+    public void Parse_TagWithAttributes_CorrectOutput()
     {
         string input = "<a href='link' id=\"myId\">text</a>";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+        // PrintResults(input, features);
 
-        Assert.AreEqual(1, elements.Length);
-        Assert.AreEqual(2, attributes.Length);
+        Assert.AreEqual(1, features.Elements.Length);
+        Assert.AreEqual(2, features.Attributes.Length);
+        Assert.AreEqual(1, features.Contents.Length);
 
-        AssertSubstring("a", input, elements[0].TagName);
-        AssertSubstring("<a href='link' id=\"myId\">", input, elements[0].FullOpeningTag);
-        AssertSubstring("text", input, elements[0].Content);
+        AssertSubstring("a", input, features.Elements[0].TagName);
+        Assert.IsTrue(features.Elements[0].TagValue.IsEmpty);
 
-        Assert.AreEqual(0, attributes[0].ElementIndex);
-        AssertSubstring("href", input, attributes[0].Key);
-        AssertSubstring("link", input, attributes[0].Value);
+        Assert.AreEqual(0, features.Attributes[0].OwnerElementIndex);
+        AssertSubstring("href", input, features.Attributes[0].Key);
+        AssertSubstring("link", input, features.Attributes[0].Value);
 
-        Assert.AreEqual(0, attributes[1].ElementIndex);
-        AssertSubstring("id", input, attributes[1].Key);
-        AssertSubstring("myId", input, attributes[1].Value);
+        Assert.AreEqual(0, features.Attributes[1].OwnerElementIndex);
+        AssertSubstring("id", input, features.Attributes[1].Key);
+        AssertSubstring("myId", input, features.Attributes[1].Value);
 
-        elements.Dispose();
-        attributes.Dispose();
+        Assert.AreEqual(0, features.Contents[0].OwnerElementIndex);
+        Assert.IsTrue(features.Contents[0].IsText);
+        AssertSubstring("text", input, features.Contents[0].Content);
+
+        features.Dispose();
     }
 
     [Test]
     public void Parse_ValuelessAttribute_Allowed()
     {
         string input = "<input disabled checked/>";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.AllowValuelessAttribute | MarkupRuleFlag.AllowEmptyTag);
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.AllowValuelessAttribute | MarkupRuleFlag.AllowEmptyTag);
+        // PrintResults(input, features);
 
-        Assert.AreEqual(1, elements.Length);
-        Assert.AreEqual(2, attributes.Length);
-        AssertSubstring("input", input, elements[0].TagName);
+        Assert.AreEqual(1, features.Elements.Length);
+        Assert.AreEqual(2, features.Attributes.Length);
+        Assert.AreEqual(0, features.Contents.Length, "Self-closing tag should have no direct text content entries");
 
-        Assert.AreEqual(0, attributes[0].ElementIndex);
-        AssertSubstring("disabled", input, attributes[0].Key);
-        Assert.IsTrue(attributes[0].Value.IsEmpty);
+        AssertSubstring("input", input, features.Elements[0].TagName);
 
-        Assert.AreEqual(0, attributes[1].ElementIndex);
-        AssertSubstring("checked", input, attributes[1].Key);
-        Assert.IsTrue(attributes[1].Value.IsEmpty);
+        Assert.AreEqual(0, features.Attributes[0].OwnerElementIndex);
+        AssertSubstring("disabled", input, features.Attributes[0].Key);
+        Assert.IsTrue(features.Attributes[0].Value.IsEmpty);
 
-        elements.Dispose();
-        attributes.Dispose();
+        Assert.AreEqual(0, features.Attributes[1].OwnerElementIndex);
+        AssertSubstring("checked", input, features.Attributes[1].Key);
+        Assert.IsTrue(features.Attributes[1].Value.IsEmpty);
+
+        features.Dispose();
     }
 
     [Test]
@@ -171,9 +249,8 @@ public class MarkupParserTests
         string input = "<input disabled/>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.AllowEmptyTag); // Valueless NOT allowed
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.AllowEmptyTag); // Valueless NOT allowed
+            features.Dispose();
         });
         StringAssert.Contains("Valueless attribute 'disabled'", ex.Message);
         StringAssert.Contains("not allowed for tag 'input'", ex.Message);
@@ -181,21 +258,24 @@ public class MarkupParserTests
     }
 
     [Test]
-    public void Parse_ElementValue_Allowed()
+    public void Parse_ElementValue_Allowed_CorrectOutput()
     {
         string input = "<color=\"red\">text</color>";
-        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.AllowElementValue);
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.AllowElementValue);
+        // PrintResults(input, features);
 
-        Assert.AreEqual(1, elements.Length);
-        Assert.AreEqual(0, attributes.Length, "Element value should not create an attribute entry.");
+        Assert.AreEqual(1, features.Elements.Length);
+        Assert.AreEqual(0, features.Attributes.Length, "Element value should not create an attribute entry.");
+        Assert.AreEqual(1, features.Contents.Length);
 
-        AssertSubstring("color", input, elements[0].TagName);
-        AssertSubstring("red", input, elements[0].Value, "Element Value");
-        AssertSubstring("text", input, elements[0].Content);
-        AssertSubstring("<color=\"red\">", input, elements[0].FullOpeningTag);
+        AssertSubstring("color", input, features.Elements[0].TagName);
+        AssertSubstring("red", input, features.Elements[0].TagValue, "Element Value");
 
-        elements.Dispose();
-        attributes.Dispose();
+        Assert.AreEqual(0, features.Contents[0].OwnerElementIndex);
+        Assert.IsTrue(features.Contents[0].IsText);
+        AssertSubstring("text", input, features.Contents[0].Content);
+
+        features.Dispose();
     }
 
     [Test]
@@ -204,9 +284,8 @@ public class MarkupParserTests
         string input = "<color=\"red\">text</color>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.None); // ElementValue NOT allowed
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.None); // ElementValue NOT allowed
+            features.Dispose();
         });
         StringAssert.Contains("Element value syntax not allowed", ex.Message);
         StringAssert.Contains("tag 'color'", ex.Message);
@@ -219,9 +298,8 @@ public class MarkupParserTests
         string input = "<a><b>unclosed content";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
         StringAssert.Contains("Unclosed tag 'b'", ex.Message); // Innermost unclosed tag
         Assert.IsInstanceOf<UnclosedTagException>(ex.InnerException);
@@ -235,9 +313,8 @@ public class MarkupParserTests
         string input = "<a><b>content</c></a>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
         StringAssert.Contains("Mismatched closing tag", ex.Message);
         Assert.IsInstanceOf<MismatchedClosingTagException>(ex.InnerException);
@@ -252,11 +329,10 @@ public class MarkupParserTests
         string input = "<a href='link'";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
-        StringAssert.Contains("Unterminated opening for tag 'a'", ex.Message);
+        StringAssert.Contains("Unterminated opening tag for tag 'a'", ex.Message);
         Assert.IsInstanceOf<UnterminatedTagException>(ex.InnerException);
     }
 
@@ -266,11 +342,10 @@ public class MarkupParserTests
         string input = "<>text</>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
-        StringAssert.Contains("Empty tag name at index 1. Found '>'", ex.Message); // Updated expected message
+        StringAssert.Contains("Empty tag name at index 1. Found '>'", ex.Message);
         Assert.IsInstanceOf<EmptyTagNameException>(ex.InnerException);
     }
 
@@ -280,9 +355,8 @@ public class MarkupParserTests
         string input = "<tag=val1 =val2>text</tag>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes, MarkupRuleFlag.AllowElementValue);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features, MarkupRuleFlag.AllowElementValue);
+            features.Dispose();
         });
         StringAssert.Contains("Multiple element values", ex.Message);
         StringAssert.Contains("tag 'tag'", ex.Message);
@@ -295,15 +369,14 @@ public class MarkupParserTests
         string input = "<a href=\"link>text</a>"; // Missing closing quote
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
-        StringAssert.Contains("Unterminated attribute for attribute 'href'", ex.Message); // Corrected context
+        StringAssert.Contains("Unterminated attribute tag for attribute 'href'", ex.Message);
         Assert.IsInstanceOf<UnterminatedTagException>(ex.InnerException);
         var specificEx = (UnterminatedTagException)ex.InnerException;
         Assert.AreEqual(UnterminatedTagException.TagType.Attribute, specificEx.TypeOfTag);
-        AssertSubstring("href", input, specificEx.ContextRange); // Context is attrName
+        AssertSubstring("href", input, specificEx.ContextRange);
     }
 
     [Test]
@@ -312,13 +385,12 @@ public class MarkupParserTests
         string input = "text</closed>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
         StringAssert.Contains("Mismatched closing tag", ex.Message);
         StringAssert.Contains("got '</closed>'", ex.Message);
-        StringAssert.Contains("Expected '[NO TAG OPEN]'", ex.Message); // Corrected expected
+        StringAssert.Contains("Expected '[NO TAG OPEN]'", ex.Message);
         Assert.IsInstanceOf<MismatchedClosingTagException>(ex.InnerException);
     }
 
@@ -328,11 +400,71 @@ public class MarkupParserTests
         string input = "<tag !attr='val'>text</tag>";
         var ex = Assert.Throws<ArgumentException>(() =>
         {
-            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var elements, out var attributes);
-            elements.Dispose();
-            attributes.Dispose();
+            MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+            features.Dispose();
         });
         StringAssert.Contains("Invalid character '!' found within tag 'tag'", ex.Message);
         Assert.IsInstanceOf<InvalidCharacterInTagException>(ex.InnerException);
+    }
+
+    [Test]
+    public void Parse_TextBeforeAndAfterTag()
+    {
+        string input = "before<a>middle</a>after";
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+        // PrintResults(input, features);
+
+        Assert.AreEqual(1, features.Elements.Length, "Elements count");
+        Assert.AreEqual(0, features.Attributes.Length, "Attributes count");
+        Assert.AreEqual(3, features.Contents.Length, "Contents count");
+
+        // Element 0: <a>
+        AssertSubstring("a", input, features.Elements[0].TagName);
+
+        // Content 0: "before" (root content)
+        Assert.AreEqual(-1, features.Contents[0].OwnerElementIndex, "Content 0 Owner (root)");
+        Assert.IsTrue(features.Contents[0].IsText, "Content 0 IsText");
+        AssertSubstring("before", input, features.Contents[0].Content, "Content 0 Text");
+
+        // Content 1: "middle" (child of <a>)
+        Assert.AreEqual(0, features.Contents[1].OwnerElementIndex, "Content 1 Owner (a)");
+        Assert.IsTrue(features.Contents[1].IsText, "Content 1 IsText");
+        AssertSubstring("middle", input, features.Contents[1].Content, "Content 1 Text");
+
+        // Content 2: "after" (root content)
+        Assert.AreEqual(-1, features.Contents[2].OwnerElementIndex, "Content 2 Owner (root)");
+        Assert.IsTrue(features.Contents[2].IsText, "Content 2 IsText");
+        AssertSubstring("after", input, features.Contents[2].Content, "Content 2 Text");
+
+        features.Dispose();
+    }
+
+    [Test]
+    public void Parse_OnlyText_CorrectContent()
+    {
+        string input = "just plain text";
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var features);
+        // PrintResults(input, features);
+
+        Assert.AreEqual(0, features.Elements.Length, "Elements count");
+        Assert.AreEqual(0, features.Attributes.Length, "Attributes count");
+        Assert.AreEqual(1, features.Contents.Length, "Contents count");
+
+        // Content 0: "just plain text" (root content)
+        Assert.AreEqual(-1, features.Contents[0].OwnerElementIndex, "Content 0 Owner (root)");
+        Assert.IsTrue(features.Contents[0].IsText, "Content 0 IsText");
+        AssertSubstring("just plain text", input, features.Contents[0].Content, "Content 0 Text");
+
+        features.Dispose();
+    }
+
+    [Test]
+    public void Parse_Nested()
+    {
+        string input = "this is <color value=\"#00FF00\">green</color> but this is <color value=\"#FF0000\">red</color> <color value=\"#0000FF\">blue line but we have <color value=\"#00FF00\">green</color> on it</color>";
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var result);
+        Assert.AreEqual(4, result.Elements.Length);
+        Assert.AreEqual(4, result.Attributes.Length);
+        PrintResults(input, result);
     }
 }

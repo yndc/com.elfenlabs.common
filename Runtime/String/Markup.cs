@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Unity.Collections;
 using Unity.Burst;
 using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs;
 
 namespace Elfenlabs.String
 {
@@ -40,86 +41,92 @@ namespace Elfenlabs.String
     [StructLayout(LayoutKind.Sequential)]
     public struct Element : IEquatable<Element>
     {
-        public Range Content;
         public Range TagName;
-        public Range FullOpeningTag;
-        public Range Value;
+        public Range TagValue; // For <tag=value> syntax
 
-        public bool Equals(Element other) => Content.Equals(other.Content) && TagName.Equals(other.TagName) && FullOpeningTag.Equals(other.FullOpeningTag) && Value.Equals(other.Value);
-        public override int GetHashCode() => Content.GetHashCode() ^ (TagName.GetHashCode() << 2) ^ (FullOpeningTag.GetHashCode() << 4) ^ (Value.GetHashCode() << 6);
+        public bool Equals(Element other) => TagName.Equals(other.TagName) && TagValue.Equals(other.TagValue);
+        public override int GetHashCode() => TagName.GetHashCode() ^ (TagValue.GetHashCode() << 2);
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct ElementAttribute : IEquatable<ElementAttribute>
     {
-        public int ElementIndex;
+        public int OwnerElementIndex; // Index into features.Elements
         public Range Key;
         public Range Value;
 
-        public bool Equals(ElementAttribute other) => ElementIndex == other.ElementIndex && Key.Equals(other.Key) && Value.Equals(other.Value);
-        public override int GetHashCode() => ElementIndex.GetHashCode() ^ (Key.GetHashCode() << 2) ^ (Value.GetHashCode() << 4);
+        public bool Equals(ElementAttribute other) => OwnerElementIndex == other.OwnerElementIndex && Key.Equals(other.Key) && Value.Equals(other.Value);
+        public override int GetHashCode() => OwnerElementIndex.GetHashCode() ^ (Key.GetHashCode() << 2) ^ (Value.GetHashCode() << 4);
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct OpenElementInfo : IEquatable<OpenElementInfo>
+    public struct ElementContent : IEquatable<ElementContent>
     {
-        public int ElementListIndex;
-        public Range TagName;
-        public int ContentStartIndex;
+        public int OwnerElementIndex;   // Index of the parent element in features.Elements (-1 for root content if supported)
+        public int ContentElementIndex; // Index of a child element in features.Elements if this content IS an element. -1 if it's text.
+        public Range Content;           // Range of plain text in the original input string. Empty if ContentElementIndex is valid.
 
-        public bool Equals(OpenElementInfo other) => ElementListIndex == other.ElementListIndex && TagName.Equals(other.TagName) && ContentStartIndex == other.ContentStartIndex;
-        public override int GetHashCode() => ElementListIndex.GetHashCode() ^ (TagName.GetHashCode() << 2) ^ (ContentStartIndex.GetHashCode() << 4);
+        public bool IsText => ContentElementIndex < 0;
+        public bool IsNestedElement => ContentElementIndex >= 0;
+
+        public bool Equals(ElementContent other) =>
+            OwnerElementIndex == other.OwnerElementIndex &&
+            ContentElementIndex == other.ContentElementIndex &&
+            Content.Equals(other.Content);
+
+        public override int GetHashCode() => OwnerElementIndex.GetHashCode() ^ (ContentElementIndex.GetHashCode() << 2) ^ (Content.GetHashCode() << 4);
     }
+
+
+    // Internal struct for the parser's open tag stack
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct OpenTagInfo // Renamed from OpenElementInfo to avoid confusion with output Element
+    {
+        public int ElementIndexInOutput; // Index in the 'features.Elements' list
+        public Range TagName;            // For matching closing tags
+    }
+
+    // Output structure
+    public struct TextMarkupFeatures : IDisposable
+    {
+        public NativeList<Element> Elements;
+        public NativeList<ElementAttribute> Attributes;
+        public NativeList<ElementContent> Contents;
+
+        public TextMarkupFeatures(Allocator allocator, int initialElementCapacity = 16, int initialAttributeCapacity = 32, int initialContentCapacity = 16)
+        {
+            Elements = new NativeList<Element>(initialElementCapacity, allocator);
+            Attributes = new NativeList<ElementAttribute>(initialAttributeCapacity, allocator);
+            Contents = new NativeList<ElementContent>(initialContentCapacity, allocator);
+        }
+
+        public void Dispose()
+        {
+            if (Elements.IsCreated) Elements.Dispose();
+            if (Attributes.IsCreated) Attributes.Dispose();
+            if (Contents.IsCreated) Contents.Dispose();
+        }
+
+        public JobHandle Dispose(JobHandle inputDeps)
+        {
+            var h1 = Elements.IsCreated ? Elements.Dispose(inputDeps) : inputDeps;
+            var h2 = Attributes.IsCreated ? Attributes.Dispose(h1) : h1;
+            return Contents.IsCreated ? Contents.Dispose(h2) : h2;
+        }
+    }
+
 
     // --- Custom Burst-Friendly Exception Types ---
-    public class MarkupParseException : ArgumentException
-    {
-        public Range ErrorRange { get; }
-        public Range ContextRange { get; }
-        public MarkupParseException(Range errorRange, Range contextRange = default) : base() { ErrorRange = errorRange; ContextRange = contextRange; }
-        protected MarkupParseException(string message, Range errorRange, Range contextRange = default) : base(message) { ErrorRange = errorRange; ContextRange = contextRange; }
-    }
-
-    public class ValuelessAttributeNotAllowedException : MarkupParseException
-    {
-        public ValuelessAttributeNotAllowedException(Range attributeNameRange, Range tagNameRange) : base(attributeNameRange, tagNameRange) { }
-    }
-    public class ElementValueNotAllowedException : MarkupParseException
-    {
-        public ElementValueNotAllowedException(Range tagNameRange, Range elementValueOperatorRange) : base(elementValueOperatorRange, tagNameRange) { }
-    }
-    public class SelfClosingTagNotAllowedException : MarkupParseException
-    {
-        public SelfClosingTagNotAllowedException(Range selfClosingTagRange, Range tagNameRange) : base(selfClosingTagRange, tagNameRange) { }
-    }
-    public class EmptyTagNameException : MarkupParseException
-    {
-        public EmptyTagNameException(Range errorRange) : base(errorRange) { } // ErrorRange points to where tag name was expected
-    }
-    public class MismatchedClosingTagException : MarkupParseException
-    {
-        public Range ExpectedTagNameRange { get; }
-        public Range ActualTagNameRange { get; }
-        public MismatchedClosingTagException(Range actualTagNameRange, Range expectedTagNameRange) : base(actualTagNameRange, expectedTagNameRange) { ExpectedTagNameRange = expectedTagNameRange; ActualTagNameRange = actualTagNameRange; }
-    }
-    public class UnclosedTagException : MarkupParseException
-    {
-        public UnclosedTagException(Range tagNameRange, Range fullOpeningTagRange) : base(fullOpeningTagRange, tagNameRange) { }
-    }
-    public class UnterminatedTagException : MarkupParseException
-    {
-        public enum TagType { Opening, Closing, Attribute, ElementValue }
-        public TagType TypeOfTag { get; }
-        public UnterminatedTagException(Range errorRange, TagType type, Range contextTagRange = default) : base(errorRange, contextTagRange) { TypeOfTag = type; }
-    }
-    public class InvalidCharacterInTagException : MarkupParseException
-    {
-        public InvalidCharacterInTagException(Range errorRange, Range contextTagRange = default) : base(errorRange, contextTagRange) { }
-    }
-    public class MultipleElementValuesException : MarkupParseException
-    {
-        public MultipleElementValuesException(Range errorRange, Range tagNameRange) : base(errorRange, tagNameRange) { }
-    }
+    public class MarkupParseException : ArgumentException { public Range ErrorRange { get; } public Range ContextRange { get; } public MarkupParseException(Range errorRange, Range contextRange = default) : base() { ErrorRange = errorRange; ContextRange = contextRange; } protected MarkupParseException(string message, Range errorRange, Range contextRange = default) : base(message) { ErrorRange = errorRange; ContextRange = contextRange; } }
+    public class ValuelessAttributeNotAllowedException : MarkupParseException { public ValuelessAttributeNotAllowedException(Range attributeNameRange, Range tagNameRange) : base(attributeNameRange, tagNameRange) { } }
+    public class ElementValueNotAllowedException : MarkupParseException { public ElementValueNotAllowedException(Range tagNameRange, Range elementValueOperatorRange) : base(elementValueOperatorRange, tagNameRange) { } }
+    public class SelfClosingTagNotAllowedException : MarkupParseException { public SelfClosingTagNotAllowedException(Range selfClosingTagRange, Range tagNameRange) : base(selfClosingTagRange, tagNameRange) { } }
+    public class EmptyTagNameException : MarkupParseException { public EmptyTagNameException(Range errorRange) : base(errorRange) { } }
+    public class MismatchedClosingTagException : MarkupParseException { public Range ExpectedTagNameRange { get; } public Range ActualTagNameRange { get; } public MismatchedClosingTagException(Range actualTagNameRange, Range expectedTagNameRange) : base(actualTagNameRange, expectedTagNameRange) { ExpectedTagNameRange = expectedTagNameRange; ActualTagNameRange = actualTagNameRange; } }
+    public class UnclosedTagException : MarkupParseException { public UnclosedTagException(Range tagNameRange, Range fullOpeningTagRange) : base(fullOpeningTagRange, tagNameRange) { } }
+    public class UnterminatedTagException : MarkupParseException { public enum TagType { Opening, Closing, Attribute, ElementValue } public TagType TypeOfTag { get; } public UnterminatedTagException(Range errorRange, TagType type, Range contextTagRange = default) : base(errorRange, contextTagRange) { TypeOfTag = type; } }
+    public class InvalidCharacterInTagException : MarkupParseException { public InvalidCharacterInTagException(Range errorRange, Range contextTagRange = default) : base(errorRange, contextTagRange) { } }
+    public class MultipleElementValuesException : MarkupParseException { public MultipleElementValuesException(Range errorRange, Range tagNameRange) : base(errorRange, tagNameRange) { } }
 
 
     public static unsafe class MarkupParser
@@ -127,14 +134,12 @@ namespace Elfenlabs.String
         public static void ParseMarkup(
             string str,
             Allocator allocator,
-            out NativeList<Element> elements,
-            out NativeList<ElementAttribute> attributes,
+            out TextMarkupFeatures features,
             MarkupRuleFlag rules = MarkupRuleFlag.AllowValuelessAttribute | MarkupRuleFlag.AllowEmptyTag)
         {
             if (string.IsNullOrEmpty(str))
             {
-                elements = new NativeList<Element>(0, allocator);
-                attributes = new NativeList<ElementAttribute>(0, allocator);
+                features = new TextMarkupFeatures(allocator, 0, 0, 0);
                 return;
             }
 
@@ -142,12 +147,12 @@ namespace Elfenlabs.String
             {
                 try
                 {
-                    ParseMarkupInternal(charPtr, str.Length, allocator, out elements, out attributes, rules);
+                    ParseMarkupInternal(charPtr, str.Length, allocator, out features, rules);
                 }
                 catch (ValuelessAttributeNotAllowedException e) { throw new ArgumentException($"Valueless attribute '{e.ErrorRange.GetString(charPtr)}' not allowed for tag '{e.ContextRange.GetString(charPtr)}' at index {e.ErrorRange.Start}. Rule 'AllowValuelessAttribute' is not set.", e); }
                 catch (ElementValueNotAllowedException e) { throw new ArgumentException($"Element value syntax not allowed for tag '{e.ContextRange.GetString(charPtr)}' near '=' at index {e.ErrorRange.Start}. Rule 'AllowElementValue' is not set.", e); }
                 catch (SelfClosingTagNotAllowedException e) { throw new ArgumentException($"Self-closing tag '{(e.ContextRange.GetString(charPtr))}' (full tag: '{e.ErrorRange.GetString(charPtr)}') not allowed at index {e.ErrorRange.Start}. Rule 'AllowEmptyTag' is not set.", e); }
-                catch (EmptyTagNameException e) { throw new ArgumentException($"Empty tag name at index {e.ErrorRange.Start}. Found '{charPtr[e.ErrorRange.Start]}'.", e); } // Corrected message
+                catch (EmptyTagNameException e) { throw new ArgumentException($"Empty tag name at index {e.ErrorRange.Start}. Found '{charPtr[e.ErrorRange.Start]}'.", e); }
                 catch (MismatchedClosingTagException e)
                 {
                     string expected = e.ExpectedTagNameRange.IsEmpty ? "[NO TAG OPEN]" : $"</{e.ExpectedTagNameRange.GetString(charPtr)}>";
@@ -158,7 +163,7 @@ namespace Elfenlabs.String
                 {
                     string tagTypeStr = e.TypeOfTag.ToString().ToLowerInvariant();
                     string contextStr = e.ContextRange.IsEmpty ? "" : $" for {(e.TypeOfTag == UnterminatedTagException.TagType.Attribute ? "attribute '" + e.ContextRange.GetString(charPtr) + "'" : "tag '" + e.ContextRange.GetString(charPtr) + "'")}";
-                    throw new ArgumentException($"Unterminated {tagTypeStr}{contextStr} starting near index {e.ErrorRange.Start}.", e);
+                    throw new ArgumentException($"Unterminated {tagTypeStr} tag{contextStr} starting near index {e.ErrorRange.Start}.", e);
                 }
                 catch (InvalidCharacterInTagException e)
                 {
@@ -176,22 +181,34 @@ namespace Elfenlabs.String
         [BurstCompile]
         public static void ParseMarkupInternal(
             char* charPtr, int charLength, Allocator allocator,
-            out NativeList<Element> elements, out NativeList<ElementAttribute> attributes,
+            out TextMarkupFeatures features,
             MarkupRuleFlag rules = MarkupRuleFlag.AllowValuelessAttribute | MarkupRuleFlag.AllowEmptyTag)
         {
-            elements = new NativeList<Element>(16, allocator);
-            attributes = new NativeList<ElementAttribute>(32, allocator);
+            features = new TextMarkupFeatures(allocator);
 
             if (charPtr == null || charLength == 0) return;
 
-            var openElementStack = new NativeList<OpenElementInfo>(8, Allocator.Temp);
+            var openElementStack = new NativeList<OpenTagInfo>(8, Allocator.Temp);
             try
             {
                 int i = 0;
+                int currentPlainTextStart = 0;
+
                 while (i < charLength)
                 {
                     if (charPtr[i] == '<')
                     {
+                        if (i > currentPlainTextStart)
+                        {
+                            int ownerIdx = openElementStack.Length > 0 ? openElementStack[openElementStack.Length - 1].ElementIndexInOutput : -1;
+                            features.Contents.Add(new ElementContent
+                            {
+                                OwnerElementIndex = ownerIdx,
+                                ContentElementIndex = -1,
+                                Content = new Range(currentPlainTextStart, i - currentPlainTextStart)
+                            });
+                        }
+
                         int tagStartIndex = i;
                         i++;
                         if (i >= charLength) throw new UnterminatedTagException(new Range(tagStartIndex, 1), UnterminatedTagException.TagType.Opening);
@@ -208,40 +225,27 @@ namespace Elfenlabs.String
 
                             if (openElementStack.Length > 0)
                             {
-                                OpenElementInfo lastOpenElement = openElementStack[openElementStack.Length - 1];
+                                OpenTagInfo lastOpenElement = openElementStack[openElementStack.Length - 1];
                                 if (CompareRanges(charPtr, lastOpenElement.TagName, charPtr, closingTagName) == 0)
                                 {
-                                    Element elementToUpdate = elements[lastOpenElement.ElementListIndex];
-                                    elementToUpdate.Content = new Range(lastOpenElement.ContentStartIndex, tagStartIndex - lastOpenElement.ContentStartIndex);
-                                    elements[lastOpenElement.ElementListIndex] = elementToUpdate;
                                     openElementStack.RemoveAt(openElementStack.Length - 1);
                                 }
                                 else throw new MismatchedClosingTagException(closingTagName, lastOpenElement.TagName);
                             }
-                            else throw new MismatchedClosingTagException(closingTagName, Range.Empty); // No open tag to close
+                            else throw new MismatchedClosingTagException(closingTagName, Range.Empty);
+                            currentPlainTextStart = i;
                             continue;
                         }
 
                         // Opening Tag
                         int openingTagNameStart = i;
-                        // Tag name must start with a valid character
-                        if (i >= charLength || !IsValidTagNameStartChar(charPtr[i]))
-                            throw new EmptyTagNameException(new Range(i, (i < charLength && charPtr[i] == '>') ? 1 : 0)); // Catches <> and < >
-
-                        while (i < charLength && IsValidTagNameChar(charPtr[i])) i++; // Consume valid tag name characters
-
-                        // Check if anything was consumed for tag name after initial valid char
-                        if (i == openingTagNameStart) // Only one char and it wasn't valid for continuation or was a special char
-                            throw new InvalidCharacterInTagException(new Range(openingTagNameStart, 1), new Range(openingTagNameStart, 0));
-
-
+                        if (i >= charLength || !IsValidTagNameStartChar(charPtr[i])) throw new EmptyTagNameException(new Range(i, (i < charLength && charPtr[i] == '>') ? 1 : 0));
+                        while (i < charLength && IsValidTagNameChar(charPtr[i])) i++;
                         Range tagName = new Range(openingTagNameStart, i - openingTagNameStart);
-                        // Redundant check if IsValidTagNameStartChar and IsValidTagNameChar are good.
-                        // if (tagName.IsEmpty) throw new EmptyTagNameException(new Range(openingTagNameStart, 0));
 
-                        int currentElementIndex = elements.Length;
-                        Element newElement = new Element { TagName = tagName, FullOpeningTag = Range.Empty, Content = Range.Empty, Value = Range.Empty };
-                        elements.Add(newElement);
+                        int currentElementListIndex = features.Elements.Length;
+                        Range elementValue = Range.Empty;
+                        features.Elements.Add(new Element { TagName = tagName, TagValue = Range.Empty });
 
                         bool elementValueSet = false;
                         while (i < charLength && charPtr[i] != '>' && !(charPtr[i] == '/' && i + 1 < charLength && charPtr[i + 1] == '>'))
@@ -249,25 +253,30 @@ namespace Elfenlabs.String
                             while (i < charLength && char.IsWhiteSpace(charPtr[i])) i++;
                             if (i >= charLength || charPtr[i] == '>' || (charPtr[i] == '/' && i + 1 < charLength && charPtr[i + 1] == '>')) break;
 
-                            bool isPotentialElementValue = charPtr[i] == '=' && elements[currentElementIndex].TagName.Start == openingTagNameStart && AttributesLengthForElement(currentElementIndex, attributes) == 0;
+                            bool isPotentialElementValue = charPtr[i] == '=' && features.Elements[currentElementListIndex].TagName.Start == openingTagNameStart && AttributesLengthForElement(currentElementListIndex, features.Attributes) == 0;
 
                             if (isPotentialElementValue)
                             {
                                 if (!rules.HasFlag(MarkupRuleFlag.AllowElementValue)) throw new ElementValueNotAllowedException(tagName, new Range(i, 1));
                                 if (elementValueSet) throw new MultipleElementValuesException(new Range(i, 1), tagName);
 
-                                i++; int elementValueStart = i; char quoteChar = '\0';
-                                if (i < charLength && (charPtr[i] == '"' || charPtr[i] == '\'')) { quoteChar = charPtr[i]; i++; elementValueStart = i; }
+                                i++;
+                                int valStart = i; // Corrected: Declare elementValueStart as valStart here
+                                char quoteChar = '\0';
+                                if (i < charLength && (charPtr[i] == '"' || charPtr[i] == '\'')) { quoteChar = charPtr[i]; i++; valStart = i; }
+
+                                int valueContentStart = valStart; // Store the actual start of value content
                                 while (i < charLength)
                                 {
                                     if (quoteChar != '\0' && charPtr[i] == quoteChar) break;
                                     if (quoteChar == '\0' && (IsWhiteSpaceOrTagChar(charPtr[i]))) break;
                                     i++;
                                 }
-                                if (i >= charLength && quoteChar != '\0') throw new UnterminatedTagException(new Range(elementValueStart - 1, charLength - (elementValueStart - 1)), UnterminatedTagException.TagType.ElementValue, tagName);
+                                // Use valueContentStart for Range, and valStart for exception context if needed
+                                if (i >= charLength && quoteChar != '\0') throw new UnterminatedTagException(new Range(valStart > 0 ? valStart - 1 : valStart, charLength - (valStart > 0 ? valStart - 1 : valStart)), UnterminatedTagException.TagType.ElementValue, tagName);
 
-                                Range elementValueRange = new Range(elementValueStart, i - elementValueStart);
-                                Element tempElem = elements[currentElementIndex]; tempElem.Value = elementValueRange; elements[currentElementIndex] = tempElem;
+                                elementValue = new Range(valueContentStart, i - valueContentStart);
+                                Element tempElem = features.Elements[currentElementListIndex]; tempElem.TagValue = elementValue; features.Elements[currentElementListIndex] = tempElem;
                                 elementValueSet = true;
                                 if (quoteChar != '\0' && i < charLength && charPtr[i] == quoteChar) i++;
                                 continue;
@@ -287,23 +296,26 @@ namespace Elfenlabs.String
                                 i++; while (i < charLength && char.IsWhiteSpace(charPtr[i])) i++;
                                 if (i >= charLength) throw new UnterminatedTagException(attrName, UnterminatedTagException.TagType.Attribute, tagName);
 
-                                int attrValueStart = i; char quoteChar = '\0';
-                                if (charPtr[i] == '"' || charPtr[i] == '\'') { quoteChar = charPtr[i]; i++; attrValueStart = i; }
+                                int valStart = i; // Declare here for attribute value
+                                char quoteChar = '\0';
+                                if (charPtr[i] == '"' || charPtr[i] == '\'') { quoteChar = charPtr[i]; i++; valStart = i; }
+
+                                int valueContentStart = valStart;
                                 while (i < charLength)
                                 {
                                     if (quoteChar != '\0' && charPtr[i] == quoteChar) break;
                                     if (quoteChar == '\0' && (IsWhiteSpaceOrTagChar(charPtr[i]))) break;
                                     i++;
                                 }
-                                if (i >= charLength && quoteChar != '\0') throw new UnterminatedTagException(new Range(attrValueStart > 0 ? attrValueStart - 1 : attrValueStart, charLength - (attrValueStart > 0 ? attrValueStart - 1 : attrValueStart)), UnterminatedTagException.TagType.Attribute, attrName); // Context is attrName
-                                attrValue = new Range(attrValueStart, i - attrValueStart);
+                                if (i >= charLength && quoteChar != '\0') throw new UnterminatedTagException(new Range(valueContentStart > 0 ? valueContentStart - 1 : valueContentStart, charLength - (valueContentStart > 0 ? valueContentStart - 1 : valueContentStart)), UnterminatedTagException.TagType.Attribute, attrName);
+                                attrValue = new Range(valueContentStart, i - valueContentStart);
                                 if (quoteChar != '\0' && i < charLength && charPtr[i] == quoteChar) i++;
                             }
                             else if (!rules.HasFlag(MarkupRuleFlag.AllowValuelessAttribute))
                             {
                                 throw new ValuelessAttributeNotAllowedException(attrName, tagName);
                             }
-                            attributes.Add(new ElementAttribute { ElementIndex = currentElementIndex, Key = attrName, Value = attrValue });
+                            features.Attributes.Add(new ElementAttribute { OwnerElementIndex = currentElementListIndex, Key = attrName, Value = attrValue });
                         }
 
                         bool selfClosing = false;
@@ -321,15 +333,21 @@ namespace Elfenlabs.String
                         if (i < charLength && charPtr[i] == '>')
                         {
                             i++;
-                            Element currentElem = elements[currentElementIndex];
-                            currentElem.FullOpeningTag = new Range(tagStartIndex, i - tagStartIndex);
-                            if (selfClosing) currentElem.Content = Range.Empty;
-                            else
+                            if (openElementStack.Length > 0)
                             {
-                                currentElem.Content = new Range(i, 0);
-                                openElementStack.Add(new OpenElementInfo { ElementListIndex = currentElementIndex, TagName = tagName, ContentStartIndex = i });
+                                OpenTagInfo parentInfo = openElementStack[openElementStack.Length - 1];
+                                features.Contents.Add(new ElementContent
+                                {
+                                    OwnerElementIndex = parentInfo.ElementIndexInOutput,
+                                    ContentElementIndex = currentElementListIndex,
+                                    Content = Range.Empty
+                                });
                             }
-                            elements[currentElementIndex] = currentElem;
+                            if (!selfClosing)
+                            {
+                                openElementStack.Add(new OpenTagInfo { ElementIndexInOutput = currentElementListIndex, TagName = tagName });
+                            }
+                            currentPlainTextStart = i;
                         }
                         else throw new UnterminatedTagException(new Range(tagStartIndex, charLength - tagStartIndex), UnterminatedTagException.TagType.Opening, tagName);
                     }
@@ -339,11 +357,21 @@ namespace Elfenlabs.String
                     }
                 }
 
+                if (currentPlainTextStart < charLength)
+                {
+                    int ownerIdx = openElementStack.Length > 0 ? openElementStack[openElementStack.Length - 1].ElementIndexInOutput : -1;
+                    features.Contents.Add(new ElementContent
+                    {
+                        OwnerElementIndex = ownerIdx,
+                        ContentElementIndex = -1,
+                        Content = new Range(currentPlainTextStart, charLength - currentPlainTextStart)
+                    });
+                }
+
                 if (openElementStack.Length > 0)
                 {
-                    OpenElementInfo lastOpenElement = openElementStack[openElementStack.Length - 1];
-                    Element elementToReport = elements[lastOpenElement.ElementListIndex];
-                    throw new UnclosedTagException(elementToReport.TagName, elementToReport.FullOpeningTag);
+                    OpenTagInfo lastOpenElement = openElementStack[openElementStack.Length - 1];
+                    throw new UnclosedTagException(lastOpenElement.TagName, lastOpenElement.TagName); // Context for FullOpeningTag needs to be found if needed
                 }
             }
             finally
@@ -380,13 +408,12 @@ namespace Elfenlabs.String
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool IsValidAttributeNameStartChar(char c)
         {
-            return IsValidTagNameStartChar(c); // Attributes can start with same chars as tags
+            return IsValidTagNameStartChar(c);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool IsValidAttributeNameContinueChar(char c)
         {
-            // Attributes can also contain ':', e.g. for namespaces, but not '=', '>', '/' or whitespace
             return IsValidTagNameChar(c) || c == ':';
         }
         private static int AttributesLengthForElement(int elementIndex, in NativeList<ElementAttribute> allAttributes)
@@ -394,7 +421,7 @@ namespace Elfenlabs.String
             int count = 0;
             for (int i = 0; i < allAttributes.Length; ++i)
             {
-                if (allAttributes[i].ElementIndex == elementIndex) count++;
+                if (allAttributes[i].OwnerElementIndex == elementIndex) count++;
             }
             return count;
         }
