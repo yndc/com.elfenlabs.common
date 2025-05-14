@@ -37,7 +37,7 @@ public class MarkupParserTests
         Assert.AreEqual(expectedLength, actual.Length, $"{context} - Length mismatch.");
     }
 
-    private void AssertRangeString(string expected, string source, Range range)
+    private void AssertSubstring(string expected, string source, Range range)
     {
         Assert.IsTrue(range.Start + range.Length <= source.Length, "Range should not exceed source length.");
         string actual = source.Substring(range.Start, range.Length);
@@ -198,14 +198,12 @@ public class MarkupParserTests
         PrintResults(input, elements, attributes);
 
         Assert.AreEqual(1, elements.Length);
-        Assert.AreEqual(1, attributes.Length);
+        Assert.AreEqual(0, attributes.Length);
 
-        AssertRange(elements[0].TagName, 1, 5, "Element 0 TagName"); // "color"
-        AssertRange(elements[0].Content, 14, 4, "Element 0 Content"); // "text"
-
-        Assert.AreEqual(0, attributes[0].ElementIndex);
-        AssertRange(attributes[0].Key, 1, 5, "Attribute 0 Key (tag name)"); // "color"
-        AssertRange(attributes[0].Value, 8, 5, "Attribute 0 Value"); // "red" (without quotes)
+        AssertSubstring("color", input, elements[0].TagName);
+        AssertSubstring("red", input, elements[0].Value);
+        AssertSubstring("text", input, elements[0].Content);
+        AssertSubstring("<color=\"red\">", input, elements[0].FullOpeningTag);
 
         elements.Dispose();
         attributes.Dispose();
@@ -280,8 +278,8 @@ public class MarkupParserTests
         Assert.AreEqual(1, attributes.Length); // Only attr2 should be parsed
 
         Assert.AreEqual(0, attributes[0].ElementIndex);
-        AssertRangeString("attr2", input, attributes[0].Key);
-        AssertRangeString("value", input, attributes[0].Value);
+        AssertSubstring("attr2", input, attributes[0].Key);
+        AssertSubstring("value", input, attributes[0].Value);
 
         elements.Dispose();
         attributes.Dispose();
