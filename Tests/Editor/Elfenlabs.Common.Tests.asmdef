@@ -1,9 +1,10 @@
 {
-    "name": "Elfenlabs.Commons.Editor",
+    "name": "Elfenlabs.Common.Editor.Tests",
     "rootNamespace": "",
     "references": [
         "GUID:08a0a167ac0eba9458f7ec1cc051fb17",
-        "GUID:d8b63aba1907145bea998dd612889d6b"
+        "GUID:fe5fe4894652bf44ca121f98042ada90",
+        "GUID:e0cd26848372d4e5c891c569017e11f1"
     ],
     "includePlatforms": [
         "Editor"

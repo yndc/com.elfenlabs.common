@@ -1,0 +1,19 @@
+{
+    "name": "Elfenlabs.Common.Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:08a0a167ac0eba9458f7ec1cc051fb17",
+        "GUID:d8b63aba1907145bea998dd612889d6b"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

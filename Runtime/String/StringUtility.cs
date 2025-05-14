@@ -30,6 +30,19 @@ namespace Elfenlabs.String
         }
     }
 
+    public struct Range<T>
+    {
+        public int Start;
+        public int Length;
+        public T Identifier;
+        public Range(int start, int length, T identifier = default)
+        {
+            Start = start;
+            Length = length;
+            Identifier = identifier;
+        }
+    }
+
     public static class StringUtility
     {
         public static NativeArray<byte> CreateByteArray(string str, Allocator allocator = Allocator.Temp)
