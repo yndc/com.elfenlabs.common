@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using Unity.Collections.LowLevel.Unsafe;
 
@@ -209,9 +210,68 @@ namespace Elfenlabs.String
             return charRef.AsByte() == '\n' || charRef.AsByte() == '\r' || charRef.AsChar() == 0x2028 || charRef.AsChar() == 0x2029;
         }
 
-        public static bool IsNewLine(byte b)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsNewLine(uint codePoint)
         {
-            return b == '\n' || b == '\r';
+            return codePoint == '\n' || codePoint == '\r' || // LF, CR
+                   codePoint == 0x2028 || // Line Separator
+                   codePoint == 0x2029;   // Paragraph Separator
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsWhiteSpace(uint codePoint)
+        {
+            // Common whitespace characters
+            return codePoint == ' ' || // Space
+                codePoint == '\t' || // Horizontal Tab
+                codePoint == '\n' || // Line Feed
+                codePoint == '\r' || // Carriage Return
+                codePoint == 0x000B || // Vertical Tab
+                codePoint == 0x000C || // Form Feed
+                codePoint == 0x00A0 || // No-Break Space
+                (codePoint >= 0x2000 && codePoint <= 0x200A) || // Various general punctuation spaces
+                codePoint == 0x2028 || // Line Separator
+                codePoint == 0x2029 || // Paragraph Separator
+                codePoint == 0x202F || // Narrow No-Break Space
+                codePoint == 0x205F || // Medium Mathematical Space
+                codePoint == 0x3000;   // Ideographic Space
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsCJK(uint codePoint)
+        {
+            if (codePoint <= 0x007F) return false; // ASCII
+
+            // Reordered CJK checks
+            if (codePoint >= 0xFF00 && codePoint <= 0xFFEF) return true; // Halfwidth/Fullwidth Forms
+            if (codePoint >= 0x3000 && codePoint <= 0x303F) return true; // CJK Symbols and Punctuation
+            if (codePoint >= 0x3040 && codePoint <= 0x309F) return true; // Hiragana
+            if (codePoint >= 0x30A0 && codePoint <= 0x30FF) return true; // Katakana
+            if (codePoint >= 0x31F0 && codePoint <= 0x31FF) return true; // Katakana Phonetic Ext
+            if (codePoint >= 0xAC00 && codePoint <= 0xD7AF) return true; // Hangul Syllables
+            if (codePoint >= 0x4E00 && codePoint <= 0x9FFF) return true; // CJK Unified Ideographs
+            if (codePoint >= 0x3400 && codePoint <= 0x4DBF) return true; // CJK Unified Ideographs Ext A
+            if (codePoint >= 0x1100 && codePoint <= 0x11FF) return true; // Hangul Jamo
+            if (codePoint >= 0x3130 && codePoint <= 0x318F) return true; // Hangul Compatibility Jamo
+            if (codePoint >= 0x3100 && codePoint <= 0x312F) return true; // Bopomofo
+            if (codePoint >= 0x31A0 && codePoint <= 0x31BF) return true; // Bopomofo Ext
+            if (codePoint >= 0xF900 && codePoint <= 0xFAFF) return true; // CJK Compatibility Ideographs
+            if (codePoint >= 0x31C0 && codePoint <= 0x31EF) return true; // CJK Strokes
+            if (codePoint >= 0x3200 && codePoint <= 0x32FF) return true; // Enclosed CJK Letters and Months
+            if (codePoint >= 0x3300 && codePoint <= 0x33FF) return true; // CJK Compatibility
+            if (codePoint >= 0x20000 && codePoint <= 0x2A6DF) return true; // CJK Unified Ideographs Ext B (optional)
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsBreakOpportunity(uint codePoint)
+        {
+            // A CJK character itself is a break opportunity *before* it.
+            // Whitespace/newline are opportunities *after* them.
+            // This logic might need refinement based on exact breaking rules.
+            // For now, if it's any of these, consider it an opportunity.
+            return IsNewLine(codePoint) || IsWhiteSpace(codePoint) || IsCJK(codePoint);
         }
     }
 }

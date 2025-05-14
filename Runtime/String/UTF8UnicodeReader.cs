@@ -1,310 +1,199 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using Unity.Burst;
 
 namespace Elfenlabs.String
 {
+    /// <summary>
+    /// Reads Unicode code points from a UTF-8 encoded byte buffer.
+    /// This struct is designed to be Burst-compatible.
+    /// </summary>
+    [BurstCompile]
     public unsafe struct UTF8UnicodeReader : IEnumerable<int>
     {
-        private int length;
-        private byte* ptr;
+        private readonly byte* m_Ptr;    // Pointer to the start of the UTF-8 data
+        private readonly int m_Length; // Total length of the byte buffer in bytes
 
+        /// <summary>
+        /// Enumerator for iterating over Unicode code points in a UTF-8 buffer.
+        /// </summary>
         public struct Enumerator : IEnumerator<int>
         {
-            private int index;
-            private UTF8UnicodeReader reader;
-            private int currentCodepoint;
+            private readonly byte* m_StartPtr;
+            private readonly int m_TotalByteLength;
+            private byte* m_CurrentPtr;
+            private int m_CurrentCodePoint;
+            private int m_BytesConsumedByCurrent;
 
-            public int Current => currentCodepoint;
-
+            public int Current => m_CurrentCodePoint;
             object IEnumerator.Current => Current;
 
-            public Enumerator(UTF8UnicodeReader reader)
+            public Enumerator(in UTF8UnicodeReader reader)
             {
-                this.reader = reader;
-                this.index = -1; // Position before the first element
-                this.currentCodepoint = 0;
+                this.m_StartPtr = reader.m_Ptr;
+                this.m_TotalByteLength = reader.m_Length;
+                this.m_CurrentPtr = reader.m_Ptr;
+                this.m_CurrentCodePoint = 0;
+                this.m_BytesConsumedByCurrent = 0;
             }
 
             public void Dispose() { }
 
             public bool MoveNext()
             {
-                if (index == -1) // First call to MoveNext
+                if (m_BytesConsumedByCurrent > 0) m_CurrentPtr += m_BytesConsumedByCurrent;
+                else if (m_BytesConsumedByCurrent < 0) m_CurrentPtr += 1;
+
+                if (m_CurrentPtr >= m_StartPtr + m_TotalByteLength)
                 {
-                    index = 0;
-                }
-                else
-                {
-                    // Advance index based on the length of the previous character
-                    if (reader.IsASCII(index))
-                    {
-                        index += 1;
-                    }
-                    else if (reader.Is2ByteSequence(index))
-                    {
-                        index += 2;
-                    }
-                    else if (reader.Is3ByteSequence(index))
-                    {
-                        index += 3;
-                    }
-                    else if (reader.Is4ByteSequence(index))
-                    {
-                        index += 4;
-                    }
-                    else
-                    {
-                        // Invalid UTF-8 sequence or end of string, advance by 1 to be safe or handle error
-                        index += 1;
-                    }
+                    m_CurrentCodePoint = 0; m_BytesConsumedByCurrent = 0; return false;
                 }
 
-                if (index >= reader.length)
-                {
-                    currentCodepoint = 0; // Or some other indicator for end
-                    return false;
-                }
+                int remainingBytes = (int)((m_StartPtr + m_TotalByteLength) - m_CurrentPtr);
+                m_CurrentCodePoint = (int)DecodeUtf8CodePointInternal(m_CurrentPtr, remainingBytes, out m_BytesConsumedByCurrent);
 
-                if (reader.IsASCII(index))
+                if (m_BytesConsumedByCurrent <= 0)
                 {
-                    currentCodepoint = reader.GetASCII(index);
-                }
-                else if (reader.Is2ByteSequence(index))
-                {
-                    if (index + 1 < reader.length)
-                        currentCodepoint = (int)reader.GetUnicodeFrom2ByteSequence(index);
-                    else { currentCodepoint = 0xFFFD; return false; } // Truncated sequence
-                }
-                else if (reader.Is3ByteSequence(index))
-                {
-                    if (index + 2 < reader.length)
-                        currentCodepoint = (int)reader.GetUnicodeFrom3ByteSequence(index);
-                    else { currentCodepoint = 0xFFFD; return false; } // Truncated sequence
-                }
-                else if (reader.Is4ByteSequence(index))
-                {
-                    if (index + 3 < reader.length)
-                        currentCodepoint = (int)reader.GetUnicodeFrom4ByteSequence(index);
-                    else { currentCodepoint = 0xFFFD; return false; } // Truncated sequence
-                }
-                else
-                {
-                    // Invalid starting byte for a UTF-8 sequence
-                    currentCodepoint = 0xFFFD; // Unicode replacement character
+                    m_BytesConsumedByCurrent = -1;
+                    return m_CurrentPtr < m_StartPtr + m_TotalByteLength;
                 }
                 return true;
             }
 
             public void Reset()
             {
-                index = -1;
-                currentCodepoint = 0;
+                m_CurrentPtr = m_StartPtr;
+                m_CurrentCodePoint = 0;
+                m_BytesConsumedByCurrent = 0;
             }
         }
 
-        public UTF8UnicodeReader(byte* ptr, int length)
+        public UTF8UnicodeReader(byte* utf8Ptr, int byteLength)
         {
-            this.ptr = ptr;
-            this.length = length;
+            this.m_Ptr = utf8Ptr;
+            this.m_Length = byteLength;
         }
+
+        public int ByteLength => m_Length;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool IsASCII(int index)
+        public uint GetCodePointAtByteOffset(int byteOffset, out int bytesReadInChar)
         {
-            return ((*(ptr + index)) & 0x80) == 0;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Is2ByteSequence(int index)
-        {
-            return ((*(ptr + index)) & 0xE0) == 0xC0;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Is3ByteSequence(int index)
-        {
-            return ((*(ptr + index)) & 0xF0) == 0xE0;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Is4ByteSequence(int index)
-        {
-            return ((*(ptr + index)) & 0xF8) == 0xF0;
-        }
-
-
-        public unsafe byte GetASCII(int index)
-        {
-            return ptr[index];
-        }
-
-        public unsafe uint GetUnicodeFrom2ByteSequence(int index)
-        {
-            byte b0 = ptr[index + 0];
-            byte b1 = ptr[index + 1];
-            if ((b1 & 0xC0) != 0x80)
+            if ((uint)byteOffset >= (uint)m_Length)
             {
-                return 0xFFFD;
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+                throw new ArgumentOutOfRangeException(nameof(byteOffset), $"Byte offset {byteOffset} is out of range for buffer of length {m_Length}.");
+#else
+            bytesReadInChar = 0; return 0xFFFD;
+#endif
             }
-            return ((uint)(b0 & 0x1F) << 6) | (uint)(b1 & 0x3F);
+            return DecodeUtf8CodePointInternal(m_Ptr + byteOffset, m_Length - byteOffset, out bytesReadInChar);
         }
 
-        public unsafe uint GetUnicodeFrom3ByteSequence(int index)
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsNewLine(int byteOffset)
         {
-            byte b0 = ptr[index + 0];
-            byte b1 = ptr[index + 1];
-            byte b2 = ptr[index + 2];
-            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80)
-            {
-                return 0xFFFD;
-            }
-            return ((uint)(b0 & 0x0F) << 12) | ((uint)(b1 & 0x3F) << 6) | (uint)(b2 & 0x3F);
+            uint codePoint = GetCodePointAtByteOffset(byteOffset, out int bytesRead);
+            return bytesRead > 0 && UnicodeUtility.IsNewLine(codePoint);
         }
 
-        public unsafe uint GetUnicodeFrom4ByteSequence(int index)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsWhiteSpace(int byteOffset)
         {
-            byte b0 = ptr[index + 0];
-            byte b1 = ptr[index + 1];
-            byte b2 = ptr[index + 2];
-            byte b3 = ptr[index + 3];
-            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
-            {
-                return 0xFFFD;
-            }
-            return ((uint)(b0 & 0x07) << 18) | ((uint)(b1 & 0x3F) << 12) | ((uint)(b2 & 0x3F) << 6) | (uint)(b3 & 0x3F);
+            uint codePoint = GetCodePointAtByteOffset(byteOffset, out int bytesRead);
+            return bytesRead > 0 && UnicodeUtility.IsWhiteSpace(codePoint);
         }
 
-        public bool IsNewLine(int index)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsCJK(int byteOffset)
         {
-            // Check for common newline characters
-            if (ptr[index] == '\n' || ptr[index] == '\r')
+            uint codePoint = GetCodePointAtByteOffset(byteOffset, out int bytesRead);
+            return bytesRead > 0 && UnicodeUtility.IsCJK(codePoint);
+        }
+
+        /// <summary>
+        /// Determines if a line break is allowed *after* the character at the current byteOffset.
+        /// A break is allowed after whitespace/newline, OR if the *next* character is CJK.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsBreakOpportunity(int byteOffset)
+        {
+            uint currentCodePoint = GetCodePointAtByteOffset(byteOffset, out int currentBytesRead);
+            if (currentBytesRead == 0) return false; // Invalid current char, no defined break
+
+            // Break opportunity *after* current if it's whitespace or newline
+            if (UnicodeUtility.IsWhiteSpace(currentCodePoint) || UnicodeUtility.IsNewLine(currentCodePoint))
             {
                 return true;
             }
 
-            // Check for other newline characters in UTF-8
-            if (Is3ByteSequence(index) && GetUnicodeFrom3ByteSequence(index) == 0x2028)
+            // Check if there's a next character
+            int nextByteOffset = byteOffset + currentBytesRead;
+            if ((uint)nextByteOffset < (uint)m_Length) // Check if next offset is within bounds
             {
-                return true;
+                uint nextCodePoint = GetCodePointAtByteOffset(nextByteOffset, out int nextBytesRead);
+                if (nextBytesRead > 0 && UnicodeUtility.IsCJK(nextCodePoint))
+                {
+                    return true; // Break opportunity *before* the next CJK character
+                }
             }
+            // If current is CJK, and next is not (or end of string), that's also a break.
+            // This is implicitly handled if IsCJKCodePoint itself is a break trigger.
 
-            if (Is4ByteSequence(index) && GetUnicodeFrom4ByteSequence(index) == 0x2029)
+            // Add rule to break *after* a CJK if the next is not CJK (or vice versa)
+            if (UnicodeUtility.IsCJK(currentCodePoint))
             {
-                return true;
+                if (!((uint)nextByteOffset < (uint)m_Length) || // End of string
+                    (GetCodePointAtByteOffset(nextByteOffset, out int _) != 0xFFFD
+                        && !UnicodeUtility.IsCJK(GetCodePointAtByteOffset(nextByteOffset, out _))))
+                {
+                    return true;
+                }
             }
 
             return false;
         }
+        public Enumerator GetEnumerator() => new Enumerator(this);
+        IEnumerator<int> IEnumerable<int>.GetEnumerator() => GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        public bool IsWhiteSpace(int index)
+        [BurstCompile]
+        private static uint DecodeUtf8CodePointInternal(byte* ptr, int maxBytesToRead, out int bytesRead)
         {
-            // Check for common whitespace characters
-            if (ptr[index] == ' ' || ptr[index] == '\t' || ptr[index] == '\n' || ptr[index] == '\r')
+            bytesRead = 0;
+            if (maxBytesToRead <= 0 || ptr == null) return 0xFFFD;
+            byte b0 = ptr[0];
+            bytesRead = 1;
+            if ((b0 & 0x80) == 0) return b0;
+            if ((b0 & 0xC0) == 0x80 || (b0 & 0xFE) == 0xFE) { bytesRead = 0; return 0xFFFD; }
+            if ((b0 & 0xE0) == 0xC0)
             {
-                return true;
+                if (maxBytesToRead < 2) { bytesRead = 0; return 0xFFFD; }
+                byte b1 = ptr[1];
+                if ((b1 & 0xC0) != 0x80) { bytesRead = 0; return 0xFFFD; }
+                bytesRead = 2; uint cp = ((uint)(b0 & 0x1F) << 6) | (uint)(b1 & 0x3F);
+                return cp >= 0x80 ? cp : 0xFFFD;
             }
-
-            // Check for other whitespace characters in UTF-8
-            if (Is3ByteSequence(index) && GetUnicodeFrom3ByteSequence(index) == 0x2028)
+            if ((b0 & 0xF0) == 0xE0)
             {
-                return true;
+                if (maxBytesToRead < 3) { bytesRead = 0; return 0xFFFD; }
+                byte b1 = ptr[1]; byte b2 = ptr[2];
+                if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) { bytesRead = 0; return 0xFFFD; }
+                bytesRead = 3; uint cp = ((uint)(b0 & 0x0F) << 12) | ((uint)(b1 & 0x3F) << 6) | (uint)(b2 & 0x3F);
+                return (cp >= 0x800 && (cp < 0xD800 || cp > 0xDFFF)) ? cp : 0xFFFD;
             }
-
-            if (Is4ByteSequence(index) && GetUnicodeFrom4ByteSequence(index) == 0x2029)
+            if ((b0 & 0xF8) == 0xF0)
             {
-                return true;
+                if (maxBytesToRead < 4) { bytesRead = 0; return 0xFFFD; }
+                byte b1 = ptr[1]; byte b2 = ptr[2]; byte b3 = ptr[3];
+                if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) { bytesRead = 0; return 0xFFFD; }
+                bytesRead = 4; uint cp = ((uint)(b0 & 0x07) << 18) | ((uint)(b1 & 0x3F) << 12) | ((uint)(b2 & 0x3F) << 6) | (uint)(b3 & 0x3F);
+                return (cp >= 0x10000 && cp < 0x110000) ? cp : 0xFFFD;
             }
-
-            return false;
-        }
-
-        public bool IsBreakOpportunity(int index)
-        {
-            if (IsNewLine(index) || IsWhiteSpace(index))
-            {
-                return true;
-            }
-
-            if (IsCJK(index))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool IsCJK(int index)
-        {
-            // If the first bit is 0, it's a single-byte ASCII character (U+0000 to U+007F)
-            // None of these are CJK characters.
-            if (IsASCII(index))
-            {
-                return false;
-            }
-
-            // 2-byte sequences are in the range U+0080 to U+07FF
-            // These are not CJK characters either.
-            if (Is2ByteSequence(index))
-            {
-                return false;
-            }
-
-            if (Is3ByteSequence(index))
-            {
-                var codePoint = GetUnicodeFrom3ByteSequence(index);
-
-                // Halfwidth and Fullwidth Forms (Includes Latin chars but often used with CJK)
-                if (codePoint >= 0xFF00 && codePoint <= 0xFFEF) return true;
-                // CJK Symbols and Punctuation (Common)
-                if (codePoint >= 0x3000 && codePoint <= 0x303F) return true;
-                // Hiragana
-                if (codePoint >= 0x3040 && codePoint <= 0x309F) return true;
-                // Katakana & Phonetic Extensions
-                if (codePoint >= 0x30A0 && codePoint <= 0x30FF) return true;
-                if (codePoint >= 0x31F0 && codePoint <= 0x31FF) return true;
-                // Hangul Syllables (Very common Korean script block)
-                if (codePoint >= 0xAC00 && codePoint <= 0xD7AF) return true;
-                // CJK Unified Ideographs (Main block)
-                if (codePoint >= 0x4E00 && codePoint <= 0x9FFF) return true;
-                // CJK Unified Ideographs Extension A
-                if (codePoint >= 0x3400 && codePoint <= 0x4DBF) return true;
-                // Hangul Jamo & Compatibility Jamo
-                if (codePoint >= 0x1100 && codePoint <= 0x11FF) return true;
-                if (codePoint >= 0x3130 && codePoint <= 0x318F) return true;
-                // Bopomofo
-                if (codePoint >= 0x3100 && codePoint <= 0x312F) return true;
-                if (codePoint >= 0x31A0 && codePoint <= 0x31BF) return true;
-                // CJK Compatibility Ideographs
-                if (codePoint >= 0xF900 && codePoint <= 0xFAFF) return true;
-                // CJK Strokes
-                if (codePoint >= 0x31C0 && codePoint <= 0x31EF) return true;
-                // Enclosed CJK Letters and Months
-                if (codePoint >= 0x3200 && codePoint <= 0x32FF) return true;
-                // CJK Compatibility
-                if (codePoint >= 0x3300 && codePoint <= 0x33FF) return true;
-            }
-
-            if (Is4ByteSequence(index))
-            {
-                var codePoint = GetUnicodeFrom4ByteSequence(index);
-
-                // CJK Unified Ideographs Extension B (Rarely used but still CJK)
-                if (codePoint >= 0x20000 && codePoint <= 0x2A6DF) return true;
-            }
-
-            return false;
-        }
-
-        public IEnumerator<int> GetEnumerator()
-        {
-            return new Enumerator(this);
-        }
-
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return GetEnumerator();
+            bytesRead = 0; return 0xFFFD;
         }
     }
 }

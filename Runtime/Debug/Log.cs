@@ -15,6 +15,11 @@ namespace Elfenlabs.Debug
             UnityEngine.Debug.Log(message);
         }
 
+        public static void Warn(string message)
+        {
+            UnityEngine.Debug.LogWarning(message);
+        }
+
         public static void Error(string message)
         {
             UnityEngine.Debug.LogError(message);
