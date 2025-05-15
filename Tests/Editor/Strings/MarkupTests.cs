@@ -467,4 +467,12 @@ public class MarkupParserTests
         Assert.AreEqual(4, result.Attributes.Length);
         PrintResults(input, result);
     }
+
+    [Test]
+    public void Usual()
+    {
+        string input = "3 is > 5, 4 > 3, 324 > > <";
+        MarkupParser.ParseMarkup(input, Allocator.TempJob, out var result);
+        PrintResults(input, result);
+    }
 }
